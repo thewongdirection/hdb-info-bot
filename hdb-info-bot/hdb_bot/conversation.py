@@ -31,7 +31,7 @@ CHOOSING_INTENT, ASKING_LOCALITY = range(2)
 
 # How many unique blocks (by transaction count) to geocode/plot per request —
 # keeps geocoding latency and the number of venue messages sent reasonable.
-MAX_BLOCK_VENUES = 20
+MAX_BLOCK_VENUES = 10
 
 # Spacing between consecutive venue messages to the same chat, to stay well
 # clear of Telegram's per-chat flood-control limits (guideline: ~1 msg/sec).

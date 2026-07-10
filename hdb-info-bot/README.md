@@ -25,8 +25,8 @@ Bot: Here is the resale price summary for Bishan (last 12 months):
      [map image with a pin + legend]
      [📍 Plot blocks on map]  [🔁 New search]
 You: [📍 Plot blocks on map]
-Bot: [20 interactive Telegram venue pins, most-transacted blocks first]
-     📍 That's 20 of 27 HDB block(s) in Bishan (the most-transacted blocks
+Bot: [10 interactive Telegram venue pins, most-transacted blocks first]
+     📍 That's 10 of 27 HDB block(s) in Bishan (the most-transacted blocks
      first), sent above as interactive map pins — tap any pin to pan,
      zoom, or open it in your maps app for directions.
 ```
@@ -37,7 +37,7 @@ authoritative rules (see "Tone, jargon, and citations" below). Send
 `/glossary` at any time for plain-English explanations of terms like MOP,
 COV, resale levy, or PSF.
 
-Tapping **📍 Plot blocks on map** geocodes the top 20 most-transacted HDB
+Tapping **📍 Plot blocks on map** geocodes the top 10 most-transacted HDB
 blocks behind those stats and sends each back as a native Telegram venue —
 an interactive map pin you can pan, zoom, or tap to open in your maps app.
 Picking **Carparks 🅿️** instead asks for an area the same way, then lists nearby
@@ -74,7 +74,7 @@ this one needs no Google Maps key at all, the chart is rendered locally.
   legend (Google's marker labels only support a single character, so the
   price itself can't be printed on the pin — see [`hdb_bot/maps.py`](hdb_bot/maps.py)).
 - **Block-level map (on request)**: the **📍 Plot blocks on map** button
-  geocodes the top 20 most-transacted HDB blocks (address strings — the
+  geocodes the top 10 most-transacted HDB blocks (address strings — the
   dataset has no coordinates) behind the last stats shown, using the Google
   Geocoding API, and sends each one back as a native Telegram **venue**
   message — an interactive pin the user can pan, zoom, and tap to open in
@@ -342,7 +342,7 @@ free quota.
   labels are a single character only; a future enhancement could render a
   custom marker icon (e.g. via a text-to-image service) with the price baked
   in, at the cost of an extra external dependency.
-- **Block-map geocoding is capped at `MAX_BLOCK_VENUES` (20, in
+- **Block-map geocoding is capped at `MAX_BLOCK_VENUES` (10, in
   `conversation.py`)**, picking the most-transacted blocks first, to keep
   the button's latency and the number of venue messages reasonable — a
   closing message says how many of the total were actually plotted.

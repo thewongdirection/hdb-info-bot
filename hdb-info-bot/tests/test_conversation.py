@@ -220,6 +220,40 @@ async def test_show_block_map_sends_one_venue_per_geocoded_block(monkeypatch):
     assert update.callback_query.message.reply_venue.await_count == len(geocoded)
 
 
+async def test_show_block_map_caps_at_max_block_venues(monkeypatch):
+    this_month = date.today().strftime("%Y-%m")
+    # 15 unique blocks, each with a distinct transaction count so the
+    # top-N-by-count selection is unambiguous.
+    records = []
+    geocoded = {}
+    for i in range(15):
+        block, street = str(100 + i), f"BISHAN ST {i}"
+        address = f"{block} {street}"
+        for _ in range(15 - i):  # block 0 has the most transactions, block 14 the fewest
+            records.append({
+                "month": this_month, "flat_type": "4 ROOM", "resale_price": 500000,
+                "block": block, "street_name": street,
+            })
+        geocoded[address] = (1.3 + i * 0.001, 103.8)
+
+    monkeypatch.setattr(conversation.local_store, "load_town_records", MagicMock(return_value=records))
+    monkeypatch.setattr(conversation, "geocode_many", AsyncMock(return_value=geocoded))
+
+    update = _make_update_callback("show_blocks")
+    context = _make_context(_make_config(google_maps_api_key="fake-key"))
+    context.user_data["last_query"] = {"intent": "buy", "towns": ["BISHAN"]}
+
+    state = await conversation.show_block_map(update, context)
+
+    assert state == conversation.CHOOSING_INTENT
+    assert update.callback_query.message.reply_venue.await_count == conversation.MAX_BLOCK_VENUES == 10
+    sent_titles = {
+        call.kwargs["title"] for call in update.callback_query.message.reply_venue.await_args_list
+    }
+    # The 10 highest-transaction blocks (0-9) should be the ones plotted, not 10-14.
+    assert sent_titles == {f"{100 + i} Bishan St {i}" for i in range(10)}
+
+
 async def test_show_block_map_no_addresses_found(monkeypatch):
     monkeypatch.setattr(conversation.local_store, "load_town_records", MagicMock(return_value=[]))
     update = _make_update_callback("show_blocks")
