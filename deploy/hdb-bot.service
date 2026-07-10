@@ -1,0 +1,19 @@
+[Unit]
+Description=hdb-info-bot Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hdbbot
+WorkingDirectory=/home/hdbbot/hdb-info-bot
+EnvironmentFile=/home/hdbbot/hdb-info-bot/.env
+ExecStart=/home/hdbbot/hdb-info-bot/.venv/bin/python -m hdb_bot.main
+Restart=on-failure
+RestartSec=5
+# Modest hardening — the bot only needs outbound HTTPS in polling mode.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
