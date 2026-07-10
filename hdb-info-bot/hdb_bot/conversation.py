@@ -22,7 +22,7 @@ from .datasets import DATASETS_FOR_INTENT
 from .geocoding import GeocodeCache, geocode_many
 from .glossary import format_full_glossary
 from .localities import LocalityMatch, LocalityNotFound, resolve
-from .maps import fetch_map_image, fetch_points_map_image
+from .maps import fetch_map_image
 from .stats import filter_recent, monthly_average_series, summarize
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,10 @@ BLOCK_VENUE_SEND_DELAY_SECONDS = 0.35
 # How many districts/areas the "Compare" chart will plot at once — keeps the
 # chart legible and each request's local_store reads bounded.
 MAX_COMPARE_ENTRIES = 6
+
+# How many carparks are offered as pick-one buttons after a carpark search.
+MAX_CARPARK_BUTTONS = 10
+_CARPARK_BUTTON_LABEL_MAX_LEN = 30
 
 _INTENT_KEYBOARD = InlineKeyboardMarkup(
     [
@@ -147,6 +151,16 @@ async def _handle_price_query(
     return CHOOSING_INTENT
 
 
+def _carpark_button_label(c: dict) -> str:
+    address = c["address"].title()
+    if len(address) > _CARPARK_BUTTON_LABEL_MAX_LEN:
+        address = address[: _CARPARK_BUTTON_LABEL_MAX_LEN - 1] + "…"
+    lots, total = c.get("lots_available"), c.get("total_lots")
+    if lots is not None and total is not None:
+        return f"{address} ({lots}/{total})"
+    return address
+
+
 async def _handle_carparks_query(
     update: Update, context: ContextTypes.DEFAULT_TYPE, match: LocalityMatch
 ) -> int:
@@ -164,14 +178,22 @@ async def _handle_carparks_query(
     message = formatting.format_carpark_message(match.towns, enriched, note=match.note)
     await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
 
-    coords = [(c["lat"], c["lng"]) for c in enriched]
-    image_bytes = await fetch_points_map_image(coords, config.google_maps_api_key, color="green")
-    if image_bytes is not None:
-        await update.message.reply_photo(
-            photo=image_bytes, caption=formatting.carpark_map_caption(match.towns, len(coords))
-        )
+    # Keyed by car_park_no so the "pick a carpark" buttons below can look up
+    # full details (coords + lot breakdown) without a second query.
+    context.user_data["last_carparks_by_no"] = {
+        c["car_park_no"]: c for c in enriched if c.get("car_park_no")
+    }
 
-    await update.message.reply_text("Want to check another area?", reply_markup=_NEW_SEARCH_KEYBOARD)
+    pickable = [c for c in enriched if c.get("car_park_no")][:MAX_CARPARK_BUTTONS]
+    keyboard_rows = [
+        [InlineKeyboardButton(_carpark_button_label(c), callback_data=f"carpark:{c['car_park_no']}")]
+        for c in pickable
+    ]
+    keyboard_rows.append([InlineKeyboardButton("🔁 New search", callback_data="restart")])
+
+    await update.message.reply_text(
+        formatting.ask_which_carpark_message(), reply_markup=InlineKeyboardMarkup(keyboard_rows)
+    )
     return CHOOSING_INTENT
 
 
@@ -314,6 +336,29 @@ async def show_block_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return CHOOSING_INTENT
 
 
+async def show_carpark_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+
+    car_park_no = query.data.split(":", 1)[1]
+    carparks_by_no = context.user_data.get("last_carparks_by_no")
+    if not carparks_by_no or car_park_no not in carparks_by_no:
+        await query.message.reply_text(formatting.run_a_search_first_message())
+        return CHOOSING_INTENT
+
+    carpark = carparks_by_no[car_park_no]
+    await query.message.reply_text(
+        formatting.carpark_lots_breakdown_message(carpark), parse_mode=ParseMode.MARKDOWN
+    )
+    await query.message.reply_venue(
+        latitude=carpark["lat"],
+        longitude=carpark["lng"],
+        title=carpark["address"].title(),
+        address=f"Car park {car_park_no}",
+    )
+    return CHOOSING_INTENT
+
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.effective_message.reply_text(formatting.cancelled_message())
     context.user_data.clear()
@@ -340,6 +385,7 @@ def build_conversation_handler() -> ConversationHandler:
             CHOOSING_INTENT: [
                 CallbackQueryHandler(intent_chosen, pattern=r"^intent:(buy|sell|rent|carparks|compare)$"),
                 CallbackQueryHandler(show_block_map, pattern=r"^show_blocks$"),
+                CallbackQueryHandler(show_carpark_map, pattern=r"^carpark:.+$"),
                 CallbackQueryHandler(restart, pattern=r"^restart$"),
             ],
             ASKING_LOCALITY: [

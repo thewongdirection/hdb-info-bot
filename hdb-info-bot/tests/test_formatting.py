@@ -65,6 +65,36 @@ def test_greeting_mentions_glossary_command():
     assert "/glossary" in formatting.greeting()
 
 
+def test_ask_which_carpark_message_is_nonempty():
+    assert formatting.ask_which_carpark_message()
+
+
+def test_carpark_lots_breakdown_labels_car_confidently_and_others_generically():
+    carpark = {
+        "address": "blk 1 test st",
+        "lots": [
+            {"lot_type": "C", "lots_available": 42, "total_lots": 100},
+            {"lot_type": "H", "lots_available": 0, "total_lots": 1},
+            {"lot_type": "Y", "lots_available": 10, "total_lots": 20},
+        ],
+        "update_datetime": "2026-01-01T00:00:00",
+    }
+    message = formatting.carpark_lots_breakdown_message(carpark)
+    assert "Car: 42/100 lots available" in message
+    # Only "C" is confidently labelled — other codes shown as their raw type,
+    # not an invented (possibly wrong) full name.
+    assert "Type H" in message
+    assert "Type Y" in message
+    assert "2026-01-01T00:00:00" in message
+    assert SOURCES_FOOTER in message
+
+
+def test_carpark_lots_breakdown_handles_no_live_data():
+    carpark = {"address": "blk 1 test st", "lots": [], "update_datetime": None}
+    message = formatting.carpark_lots_breakdown_message(carpark)
+    assert "not currently reporting" in message
+
+
 def test_tone_no_longer_uses_singlish_particles():
     # Regression guard for the professional-tone rewrite — these Singlish
     # particles should no longer appear in the bot's core messages.

@@ -89,7 +89,10 @@ async def test_fetch_availability_parses_car_lot_type():
     )
     result = await carparks.fetch_availability()
     assert result == {
-        "ACB": {"lots_available": 42, "total_lots": 100, "lot_type": "C", "update_datetime": "2026-01-01T00:00:00"}
+        "ACB": {
+            "lots": [{"lot_type": "C", "lots_available": 42, "total_lots": 100}],
+            "update_datetime": "2026-01-01T00:00:00",
+        }
     }
 
 
@@ -113,7 +116,7 @@ async def test_fetch_availability_falls_back_when_no_car_lot_type():
         )
     )
     result = await carparks.fetch_availability()
-    assert result["MOTO1"]["lot_type"] == "M"
+    assert result["MOTO1"]["lots"] == [{"lot_type": "M", "lots_available": 3, "total_lots": 10}]
 
 
 @respx.mock
@@ -130,10 +133,42 @@ def test_join_availability_sorts_most_available_first():
         {"car_park_no": "C", "address": "C"},
     ]
     availability = {
-        "A": {"lots_available": 5, "total_lots": 100},
-        "B": {"lots_available": 50, "total_lots": 100},
+        "A": {"lots": [{"lot_type": "C", "lots_available": 5, "total_lots": 100}], "update_datetime": "t"},
+        "B": {"lots": [{"lot_type": "C", "lots_available": 50, "total_lots": 100}], "update_datetime": "t"},
         # C has no live data at all
     }
     result = carparks.join_availability(matched, availability)
     assert [c["car_park_no"] for c in result] == ["B", "A", "C"]
     assert result[2].get("lots_available") is None
+    assert result[2]["lots"] == []
+
+
+def test_join_availability_preserves_full_lot_breakdown():
+    matched = [{"car_park_no": "A", "address": "A"}]
+    availability = {
+        "A": {
+            "lots": [
+                {"lot_type": "H", "lots_available": 0, "total_lots": 1},
+                {"lot_type": "C", "lots_available": 42, "total_lots": 100},
+                {"lot_type": "Y", "lots_available": 10, "total_lots": 20},
+            ],
+            "update_datetime": "2026-01-01T00:00:00",
+        },
+    }
+    result = carparks.join_availability(matched, availability)
+    c = result[0]
+    # Primary figure prefers "C" even though it wasn't first in the list.
+    assert c["lot_type"] == "C"
+    assert c["lots_available"] == 42
+    assert c["total_lots"] == 100
+    # Full breakdown is preserved, not collapsed to just the primary entry.
+    assert len(c["lots"]) == 3
+    assert c["update_datetime"] == "2026-01-01T00:00:00"
+
+
+def test_join_availability_no_live_data_has_empty_lots():
+    matched = [{"car_park_no": "Z", "address": "Z"}]
+    result = carparks.join_availability(matched, {})
+    assert result[0]["lots"] == []
+    assert result[0]["lots_available"] is None
+    assert result[0]["update_datetime"] is None

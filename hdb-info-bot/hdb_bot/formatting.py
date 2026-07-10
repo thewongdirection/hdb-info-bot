@@ -216,7 +216,7 @@ def format_carpark_message(
         lines.append(f"*{address}* — {lots_str}{flags_str}")
 
     if len(carparks) > shown_limit:
-        lines.append(f"\n...and {len(carparks) - shown_limit} more (see the map for the full list).")
+        lines.append(f"\n...and {len(carparks) - shown_limit} more.")
 
     lines.append("")
     lines.append(glossary.SOURCES_FOOTER)
@@ -224,9 +224,48 @@ def format_carpark_message(
     return "\n".join(lines).strip()
 
 
-def carpark_map_caption(towns: list[str], count: int) -> str:
-    town_list = ", ".join(t.title() for t in towns)
-    return f"🅿️ {count} carpark(s) near *{town_list}* shown on the map."
+# Only "C" (Car) is documented with confidence across public sources; the
+# other codes data.gov.sg's feed uses (H, Y, S, ...) don't have a
+# consistently corroborated meaning, so rather than guess, they're shown as
+# their raw code — inaccurate labelling would be worse than no label.
+_LOT_TYPE_LABELS = {"C": "Car"}
+
+
+def _lot_type_label(lot_type: str | None) -> str:
+    if not lot_type:
+        return "Lots"
+    return _LOT_TYPE_LABELS.get(lot_type.upper(), f"Type {lot_type}")
+
+
+def ask_which_carpark_message() -> str:
+    return "Which carpark would you like to see on the map? Choose one below:"
+
+
+def carpark_lots_breakdown_message(carpark: dict) -> str:
+    address = carpark["address"].title()
+    lots = carpark.get("lots") or []
+
+    lines = [f"🅿️ *{address}*", ""]
+    if not lots:
+        lines.append("Live availability is not currently reporting for this carpark.")
+    else:
+        for lot in lots:
+            label = _lot_type_label(lot.get("lot_type"))
+            available = lot.get("lots_available")
+            total = lot.get("total_lots")
+            if available is not None and total is not None:
+                lines.append(f"{label}: {available}/{total} lots available")
+            else:
+                lines.append(f"{label}: live availability not currently reporting")
+
+    update_datetime = carpark.get("update_datetime")
+    if update_datetime:
+        lines.append("")
+        lines.append(f"_Last updated: {update_datetime}_")
+
+    lines.append("")
+    lines.append(glossary.SOURCES_FOOTER)
+    return "\n".join(lines).strip()
 
 
 def compare_no_valid_localities_message(raw_entries: list[str]) -> str:

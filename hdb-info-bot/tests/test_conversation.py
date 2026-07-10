@@ -114,19 +114,28 @@ async def test_locality_received_success_sends_stats(monkeypatch):
     assert context.user_data["last_query"] == {"intent": "buy", "towns": ["BISHAN"]}
 
 
-async def test_locality_received_carparks_success(monkeypatch):
-    matched = [
-        {
-            "car_park_no": "ACB", "address": "Test Address", "lat": 1.3, "lng": 103.8,
-            "car_park_type": "SURFACE", "type_of_parking_system": "ELECTRONIC",
-            "short_term_parking": "WHOLE DAY", "free_parking": "NO", "night_parking": "YES",
-            "nearest_town": "BISHAN",
-        }
-    ]
+def _make_matched_carpark(car_park_no="ACB", **overrides) -> dict:
+    base = {
+        "car_park_no": car_park_no, "address": "Test Address", "lat": 1.3, "lng": 103.8,
+        "car_park_type": "SURFACE", "type_of_parking_system": "ELECTRONIC",
+        "short_term_parking": "WHOLE DAY", "free_parking": "NO", "night_parking": "YES",
+        "nearest_town": "BISHAN",
+    }
+    base.update(overrides)
+    return base
+
+
+async def test_locality_received_carparks_success_presents_selection_keyboard(monkeypatch):
+    matched = [_make_matched_carpark()]
     monkeypatch.setattr(conversation.carparks, "get_carparks_for_towns", MagicMock(return_value=matched))
     monkeypatch.setattr(
         conversation.carparks, "fetch_availability",
-        AsyncMock(return_value={"ACB": {"lots_available": 10, "total_lots": 20, "lot_type": "C", "update_datetime": "now"}}),
+        AsyncMock(return_value={
+            "ACB": {
+                "lots": [{"lot_type": "C", "lots_available": 10, "total_lots": 20}],
+                "update_datetime": "now",
+            }
+        }),
     )
 
     context = _make_context(_make_config(google_maps_api_key=None))
@@ -136,8 +145,13 @@ async def test_locality_received_carparks_success(monkeypatch):
     state = await conversation.locality_received(update, context)
 
     assert state == conversation.CHOOSING_INTENT
-    update.message.reply_text.assert_awaited()
     conversation.carparks.get_carparks_for_towns.assert_called_once()
+    # No automatic map anymore — a text summary, then a keyboard to pick one carpark.
+    assert update.message.reply_text.await_count >= 2
+    keyboard = update.message.reply_text.await_args.kwargs["reply_markup"]
+    button_texts = [b.text for row in keyboard.inline_keyboard for b in row]
+    assert any("Test Address" in t for t in button_texts)
+    assert context.user_data["last_carparks_by_no"]["ACB"]["lots_available"] == 10
 
 
 async def test_locality_received_carparks_no_carparks_reprompts(monkeypatch):
@@ -150,6 +164,54 @@ async def test_locality_received_carparks_no_carparks_reprompts(monkeypatch):
 
     assert state == conversation.ASKING_LOCALITY
     update.message.reply_text.assert_awaited()
+
+
+async def test_show_carpark_map_no_prior_selection_reprompts():
+    update = _make_update_callback("carpark:ACB")
+    context = _make_context(_make_config())
+
+    state = await conversation.show_carpark_map(update, context)
+
+    assert state == conversation.CHOOSING_INTENT
+    update.callback_query.message.reply_text.assert_awaited_once()
+    update.callback_query.message.reply_venue.assert_not_awaited()
+
+
+async def test_show_carpark_map_unknown_car_park_no_reprompts():
+    update = _make_update_callback("carpark:DOES_NOT_EXIST")
+    context = _make_context(_make_config())
+    context.user_data["last_carparks_by_no"] = {"ACB": _make_matched_carpark()}
+
+    state = await conversation.show_carpark_map(update, context)
+
+    assert state == conversation.CHOOSING_INTENT
+    update.callback_query.message.reply_venue.assert_not_awaited()
+
+
+async def test_show_carpark_map_success_sends_breakdown_and_venue():
+    carpark = _make_matched_carpark(
+        lots=[
+            {"lot_type": "C", "lots_available": 42, "total_lots": 100},
+            {"lot_type": "H", "lots_available": 0, "total_lots": 1},
+        ],
+        update_datetime="2026-01-01T00:00:00",
+        lots_available=42, total_lots=100, lot_type="C",
+    )
+    update = _make_update_callback("carpark:ACB")
+    context = _make_context(_make_config())
+    context.user_data["last_carparks_by_no"] = {"ACB": carpark}
+
+    state = await conversation.show_carpark_map(update, context)
+
+    assert state == conversation.CHOOSING_INTENT
+    update.callback_query.message.reply_text.assert_awaited_once()
+    breakdown_text = update.callback_query.message.reply_text.await_args.args[0]
+    assert "42/100" in breakdown_text
+
+    update.callback_query.message.reply_venue.assert_awaited_once()
+    venue_kwargs = update.callback_query.message.reply_venue.await_args.kwargs
+    assert venue_kwargs["latitude"] == 1.3
+    assert venue_kwargs["longitude"] == 103.8
 
 
 async def test_show_block_map_no_prior_query_reprompts():

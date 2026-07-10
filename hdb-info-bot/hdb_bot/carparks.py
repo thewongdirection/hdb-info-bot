@@ -85,10 +85,24 @@ def get_carparks_for_towns(towns: list[str], *, data_dir: Path | None = None) ->
     return [c for c in _carpark_cache if c["nearest_town"] in town_keys]
 
 
+def _parse_lot(entry: dict) -> dict:
+    try:
+        lots_available: int | None = int(entry.get("lots_available"))
+        total_lots: int | None = int(entry.get("total_lots"))
+    except (TypeError, ValueError):
+        lots_available = total_lots = None
+    return {"lot_type": entry.get("lot_type"), "lots_available": lots_available, "total_lots": total_lots}
+
+
 async def fetch_availability(
     api_key: str | None = None, *, timeout: float = REQUEST_TIMEOUT
 ) -> dict[str, dict]:
     """Live lots-available lookup, keyed by car_park_no.
+
+    Each entry carries the *full* per-lot-type breakdown (a carpark can
+    report separate counts for cars, heavy vehicles, etc. — see
+    `join_availability`/formatting for how the "primary" figure and the
+    full breakdown are both surfaced) plus when it was last updated.
 
     Never raises — returns {} on any failure so a flaky real-time API can't
     break the carpark listing; facility info still shows without live counts.
@@ -112,39 +126,50 @@ async def fetch_availability(
         car_park_no = entry.get("carpark_number")
         if not car_park_no:
             continue
-        info_list = entry.get("carpark_info", [])
-        # Prefer the "C" (car) lot type; fall back to whatever's reported.
-        chosen = next((i for i in info_list if i.get("lot_type") == "C"), None) or (
-            info_list[0] if info_list else None
-        )
-        if chosen is None:
+        lots = [_parse_lot(i) for i in entry.get("carpark_info", [])]
+        if not lots:
             continue
-        try:
-            lots_available: int | None = int(chosen.get("lots_available"))
-            total_lots: int | None = int(chosen.get("total_lots"))
-        except (TypeError, ValueError):
-            lots_available = total_lots = None
-        result[car_park_no] = {
-            "lots_available": lots_available,
-            "total_lots": total_lots,
-            "lot_type": chosen.get("lot_type"),
-            "update_datetime": entry.get("update_datetime"),
-        }
+        result[car_park_no] = {"lots": lots, "update_datetime": entry.get("update_datetime")}
     return result
+
+
+def _primary_lot(lots: list[dict]) -> dict | None:
+    """The lot-type entry to headline with — prefers "C" (car), the type
+    present at almost every carpark, falling back to whatever's reported."""
+    if not lots:
+        return None
+    return next((lot for lot in lots if lot.get("lot_type") == "C"), lots[0])
 
 
 def join_availability(carparks: list[dict], availability: dict[str, dict]) -> list[dict]:
     """Merge live availability into carpark info dicts.
 
-    Sorted with the most-available carparks first (most useful for a
-    "where can I actually park" listing); carparks with no live data right
-    now (not currently reporting) sort last, still shown with facility info.
+    Adds `lots` (the full per-lot-type breakdown), `update_datetime`, and
+    `lots_available`/`total_lots`/`lot_type` (the "primary" figure, for the
+    summary listing and sort order — see `_primary_lot`). Sorted with the
+    most-available carparks first (most useful for a "where can I actually
+    park" listing); carparks with no live data right now (not currently
+    reporting) sort last, still shown with facility info.
     """
-    enriched = [{**c, **availability.get(c["car_park_no"], {})} for c in carparks]
+    enriched = []
+    for c in carparks:
+        avail = availability.get(c["car_park_no"], {})
+        lots = avail.get("lots", [])
+        primary = _primary_lot(lots) or {}
+        enriched.append(
+            {
+                **c,
+                "lots": lots,
+                "update_datetime": avail.get("update_datetime"),
+                "lots_available": primary.get("lots_available"),
+                "total_lots": primary.get("total_lots"),
+                "lot_type": primary.get("lot_type"),
+            }
+        )
 
     def sort_key(c: dict) -> tuple[int, int]:
-        lots = c.get("lots_available")
-        return (0 if lots is not None else 1, -(lots or 0))
+        lots_available = c.get("lots_available")
+        return (0 if lots_available is not None else 1, -(lots_available or 0))
 
     enriched.sort(key=sort_key)
     return enriched
