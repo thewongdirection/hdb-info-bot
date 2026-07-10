@@ -1,13 +1,14 @@
 # hdb-info-bot
 
 A Telegram bot with a friendly, professional tone that helps you **buy**,
-**sell**, or **rent** an HDB flat, or find **carpark** availability nearby.
-Tell it a town, postal code, or district number, and it pulls real
-transaction data from [data.gov.sg](https://data.gov.sg/datasets?topics=housing),
-summarizes recent price/rent stats by flat type, and drops a Google Map with
-pins for the areas you asked about — plus, on request, the individual HDB
-blocks behind those stats as interactive map pins you can pan, zoom, and
-open in your own maps app.
+**sell**, or **rent** an HDB flat, find **carpark** availability nearby, or
+**compare** prices across districts. Tell it a town, postal code, or
+district number, and it pulls real transaction data from
+[data.gov.sg](https://data.gov.sg/datasets?topics=housing), summarizes
+recent price/rent stats by flat type, and drops a Google Map with pins for
+the areas you asked about — plus, on request, the individual HDB blocks
+behind those stats as interactive map pins you can pan, zoom, and open in
+your own maps app.
 
 ```
 You: /start
@@ -40,8 +41,9 @@ COV, resale levy, or PSF.
 Tapping **📍 Plot blocks on map** geocodes the top 10 most-transacted HDB
 blocks behind those stats and sends each back as a native Telegram venue —
 an interactive map pin you can pan, zoom, or tap to open in your maps app.
-Picking **Carparks 🅿️** instead asks for an area the same way, then lists nearby
-HDB carparks with live lots-available counts and a map. Picking
+Picking **Carparks 🅿️** instead asks for an area, lists nearby HDB carparks
+with live lots-available counts, and lets you pick one via inline buttons
+to see its full lots breakdown and an interactive map pin. Picking
 **Compare Districts 📊** asks for a few areas at once (comma-separated) and
 sends back a line chart comparing their monthly average resale price —
 this one needs no Google Maps key at all, the chart is rendered locally.
@@ -89,9 +91,13 @@ this one needs no Google Maps key at all, the chart is rendered locally.
   dataset (synced locally like everything else) with its **real-time**
   [Carpark Availability API](https://data.gov.sg/datasets/d_ca933a644e55d34fe21f28b8052fac63/view)
   (queried live, since lots-available changes minute to minute and can't be
-  cached) — see [`hdb_bot/carparks.py`](hdb_bot/carparks.py). Carpark
-  locations come as SVY21 coordinates, converted to lat/lng for free with no
-  API call via [`hdb_bot/svy21.py`](hdb_bot/svy21.py).
+  cached) — see [`hdb_bot/carparks.py`](hdb_bot/carparks.py). After listing
+  nearby carparks, up to `MAX_CARPARK_BUTTONS` (10) are offered as inline
+  buttons; picking one sends the full per-lot-type breakdown (not just a
+  single "Car" figure — a carpark can separately report cars, heavy
+  vehicles, etc.) and that carpark alone as an interactive venue pin.
+  Carpark locations come as SVY21 coordinates, converted to lat/lng for free
+  with no API call via [`hdb_bot/svy21.py`](hdb_bot/svy21.py).
 - **Compare Districts**: a 5th top-level option that takes several
   comma-separated areas (towns/postal codes/district numbers, freely mixed)
   and charts their monthly average resale price side by side over
@@ -124,7 +130,7 @@ hdb_bot/
   conversation.py   ConversationHandler: /start -> intent -> locality -> results
   localities.py     postal code / district / town-name resolution
   stats.py          median/percentile/trend/monthly-average calculations
-  maps.py           Google Static Maps pin + legend builder (lettered + unlabeled-cloud)
+  maps.py           Google Static Maps pin + legend builder (town-overview map)
   geocoding.py      Google Geocoding API client + permanent disk cache, for the block map
   svy21.py          SVY21 <-> WGS84 coordinate conversion (carpark locations), no API needed
   carparks.py       carpark info (local cache) + live availability (real-time API), joined
@@ -159,15 +165,23 @@ Dockerfile          container build for the Cloud Run deployment
 data.gov.sg's APIs work without a key today, but they began enforcing
 tighter rate limits on unauthenticated requests from Dec 2025 onwards, so
 getting a key is worth the two minutes. The bot only calls data.gov.sg from
-its background sync job (once at startup, then every `SYNC_INTERVAL_HOURS`),
-never per-user-message, so this matters far less here than it would for a
-live-query bot — but it's still good practice:
+its background sync job (once at startup, then every `SYNC_INTERVAL_HOURS`)
+and the live carpark-availability check, never for most per-user-messages,
+so this matters far less here than it would for a live-query bot — but
+it's still good practice:
 
 1. Go to [data.gov.sg](https://data.gov.sg) and sign up (top-right login
    modal → Sign Up), preferably with an email you can access an OTP on.
 2. Once logged in, open your account dashboard and request an API key —
    choose **Developer key** for a personal project like this.
 3. Copy the key into `DATA_GOV_SG_API_KEY`.
+
+The key is sent as an `x-api-key` request header, per data.gov.sg's own
+["How to use your API key"](https://guide.data.gov.sg/developer-guide/api-overview/how-to-use-your-api-key)
+guide — this is already implemented for you in
+[`hdb_bot/data_sync.py`](hdb_bot/data_sync.py) and
+[`hdb_bot/carparks.py`](hdb_bot/carparks.py); you only need to supply the
+key itself in `.env`.
 
 ### 1c. Google Maps API key (Static Maps + Geocoding)
 
@@ -204,7 +218,8 @@ python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
-# edit .env and fill in TELEGRAM_BOT_TOKEN at minimum
+# edit .env and replace the your-...-here placeholders with real values
+# (TELEGRAM_BOT_TOKEN at minimum — see section 1 above for how to get each key)
 python -m hdb_bot.main
 ```
 
@@ -355,6 +370,14 @@ free quota.
   that one call at request time is the sole exception to the "no live
   data.gov.sg calls" design, and if that API is briefly down the bot still
   shows facility info, just without live counts.
+- **Carpark lot-type labels are conservative on purpose.** Only `"C"` (Car)
+  is confidently documented across public sources; other codes the feed
+  uses (`H`, `Y`, `S`, ...) don't have a consistently corroborated meaning,
+  so the breakdown shows them as their raw code rather than a guessed full
+  name — an inaccurate label would be worse than an unlabelled one.
+- **Carpark selection is capped at `MAX_CARPARK_BUTTONS` (10, in
+  `conversation.py`)** — only the top 10 (by live availability) are offered
+  as pick buttons, even if the text listing above shows more.
 - **Compare Districts is resale-only** (average *resale price*, not rent) —
   matches the "average prices" framing of the request; a rent-comparison
   chart would be a straightforward extension of the same code if wanted
