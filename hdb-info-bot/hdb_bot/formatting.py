@@ -171,11 +171,12 @@ def block_map_failed_message() -> str:
     return "I wasn't able to map any of those blocks this time — data.gov.sg or Google Maps may be temporarily unavailable. Please try again shortly."
 
 
-def block_map_caption(towns: list[str], geocoded_count: int, total_count: int) -> str:
+def block_venues_summary(towns: list[str], geocoded_count: int, total_count: int) -> str:
     town_list = ", ".join(t.title() for t in towns)
     lines = [
-        f"📍 This map shows {geocoded_count} of {total_count} HDB block(s) in "
-        f"*{town_list}* (the most-transacted blocks are shown first)."
+        f"📍 That's {geocoded_count} of {total_count} HDB block(s) in *{town_list}* "
+        "(the most-transacted blocks first), sent above as interactive map pins — "
+        "tap any pin to pan, zoom, or open it in your maps app for directions."
     ]
     if geocoded_count < total_count:
         lines.append(f"({total_count - geocoded_count} could not be located.)")

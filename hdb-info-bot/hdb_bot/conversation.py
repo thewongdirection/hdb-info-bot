@@ -30,8 +30,12 @@ logger = logging.getLogger(__name__)
 CHOOSING_INTENT, ASKING_LOCALITY = range(2)
 
 # How many unique blocks (by transaction count) to geocode/plot per request —
-# keeps geocoding latency and the map's pin count reasonable.
-MAX_BLOCKS_TO_PLOT = 60
+# keeps geocoding latency and the number of venue messages sent reasonable.
+MAX_BLOCK_VENUES = 20
+
+# Spacing between consecutive venue messages to the same chat, to stay well
+# clear of Telegram's per-chat flood-control limits (guideline: ~1 msg/sec).
+BLOCK_VENUE_SEND_DELAY_SECONDS = 0.35
 
 # How many districts/areas the "Compare" chart will plot at once — keeps the
 # chart legible and each request's local_store reads bounded.
@@ -271,7 +275,9 @@ async def show_block_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         address = f"{(r.get('block') or '').strip()} {(r.get('street_name') or '').strip()}".strip()
         if address:
             address_counts[address] += 1
-    addresses = [a for a, _ in address_counts.most_common(MAX_BLOCKS_TO_PLOT)]
+    top_entries = address_counts.most_common(MAX_BLOCK_VENUES)
+    addresses = [a for a, _ in top_entries]
+    counts_by_address = dict(top_entries)
 
     if not addresses:
         await query.message.reply_text(formatting.block_map_no_data_message())
@@ -285,14 +291,26 @@ async def show_block_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.message.reply_text(formatting.block_map_failed_message())
         return CHOOSING_INTENT
 
-    image_bytes = await fetch_points_map_image(list(geocoded.values()), config.google_maps_api_key)
-    if image_bytes is None:
-        await query.message.reply_text(formatting.block_map_failed_message())
-        return CHOOSING_INTENT
+    # Sent as native Telegram venues rather than a static image — each pin is
+    # individually pannable/zoomable within Telegram and can be tapped to
+    # open in the user's own maps app for directions.
+    town_label = towns[0].title()
+    for address in addresses:
+        coords = geocoded.get(address)
+        if coords is None:
+            continue
+        lat, lng = coords
+        await query.message.reply_venue(
+            latitude=lat,
+            longitude=lng,
+            title=address.title(),
+            address=f"{town_label} — {counts_by_address[address]} transaction(s)",
+        )
+        await asyncio.sleep(BLOCK_VENUE_SEND_DELAY_SECONDS)
 
-    caption = formatting.block_map_caption(towns, len(geocoded), len(addresses))
-    filename = f"hdb_blocks_{towns[0].lower().replace('/', '_')}.png"
-    await query.message.reply_document(document=image_bytes, filename=filename, caption=caption)
+    await query.message.reply_text(
+        formatting.block_venues_summary(towns, len(geocoded), len(addresses))
+    )
     return CHOOSING_INTENT
 
 

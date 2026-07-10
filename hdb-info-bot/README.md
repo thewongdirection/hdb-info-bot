@@ -5,8 +5,9 @@ A Telegram bot with a friendly, professional tone that helps you **buy**,
 Tell it a town, postal code, or district number, and it pulls real
 transaction data from [data.gov.sg](https://data.gov.sg/datasets?topics=housing),
 summarizes recent price/rent stats by flat type, and drops a Google Map with
-pins for the areas you asked about — plus, on request, a downloadable map
-with every individual HDB block behind those stats plotted.
+pins for the areas you asked about — plus, on request, the individual HDB
+blocks behind those stats as interactive map pins you can pan, zoom, and
+open in your own maps app.
 
 ```
 You: /start
@@ -23,6 +24,11 @@ Bot: Here is the resale price summary for Bishan (last 12 months):
        ...
      [map image with a pin + legend]
      [📍 Plot blocks on map]  [🔁 New search]
+You: [📍 Plot blocks on map]
+Bot: [20 interactive Telegram venue pins, most-transacted blocks first]
+     📍 That's 20 of 27 HDB block(s) in Bishan (the most-transacted blocks
+     first), sent above as interactive map pins — tap any pin to pan,
+     zoom, or open it in your maps app for directions.
 ```
 
 Every substantive reply ends with a source citation and a disclaimer —
@@ -31,9 +37,10 @@ authoritative rules (see "Tone, jargon, and citations" below). Send
 `/glossary` at any time for plain-English explanations of terms like MOP,
 COV, resale levy, or PSF.
 
-Tapping **📍 Plot blocks on map** geocodes every HDB block behind those
-stats and sends back a downloadable image with all of them pinned. Picking
-**Carparks 🅿️** instead asks for an area the same way, then lists nearby
+Tapping **📍 Plot blocks on map** geocodes the top 20 most-transacted HDB
+blocks behind those stats and sends each back as a native Telegram venue —
+an interactive map pin you can pan, zoom, or tap to open in your maps app.
+Picking **Carparks 🅿️** instead asks for an area the same way, then lists nearby
 HDB carparks with live lots-available counts and a map. Picking
 **Compare Districts 📊** asks for a few areas at once (comma-separated) and
 sends back a line chart comparing their monthly average resale price —
@@ -67,12 +74,15 @@ this one needs no Google Maps key at all, the chart is rendered locally.
   legend (Google's marker labels only support a single character, so the
   price itself can't be printed on the pin — see [`hdb_bot/maps.py`](hdb_bot/maps.py)).
 - **Block-level map (on request)**: the **📍 Plot blocks on map** button
-  geocodes the actual HDB blocks (address strings — dataset has no
-  coordinates) behind the last stats shown, using the Google Geocoding API,
-  and sends back a downloadable image with every block pinned. Results are
+  geocodes the top 20 most-transacted HDB blocks (address strings — the
+  dataset has no coordinates) behind the last stats shown, using the Google
+  Geocoding API, and sends each one back as a native Telegram **venue**
+  message — an interactive pin the user can pan, zoom, and tap to open in
+  their own maps app, rather than a static image. Geocoding results are
   cached to disk forever (blocks don't move) in
   [`hdb_bot/geocoding.py`](hdb_bot/geocoding.py), so repeat queries for the
-  same area are instant and don't re-spend API quota.
+  same area are instant and don't re-spend API quota. Venue messages are
+  spaced ~0.35s apart to stay clear of Telegram's per-chat flood limits.
 - **Carparks**: a 4th top-level option alongside buy/sell/rent. Combines
   data.gov.sg's static
   [HDB Carpark Information](https://data.gov.sg/dataset/hdb-carpark-information)
@@ -332,10 +342,10 @@ free quota.
   labels are a single character only; a future enhancement could render a
   custom marker icon (e.g. via a text-to-image service) with the price baked
   in, at the cost of an extra external dependency.
-- **Block-map geocoding is capped at `MAX_BLOCKS_TO_PLOT` (60, in
+- **Block-map geocoding is capped at `MAX_BLOCK_VENUES` (20, in
   `conversation.py`)**, picking the most-transacted blocks first, to keep
-  the button's latency and the map's pin count reasonable — a caption on the
-  result says how many of the total were actually plotted.
+  the button's latency and the number of venue messages reasonable — a
+  closing message says how many of the total were actually plotted.
 - **Carpark "nearest town" is approximate.** The carpark dataset has no
   `town` field either, only coordinates — each carpark is assigned to
   whichever of the 26 HDB town centroids is numerically closest, which is

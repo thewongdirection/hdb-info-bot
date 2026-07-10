@@ -1,4 +1,5 @@
 import json
+from datetime import date
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -9,6 +10,14 @@ from hdb_bot import conversation
 from hdb_bot.config import Config
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture(autouse=True)
+def _no_real_sleep(monkeypatch):
+    async def _instant_sleep(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(conversation.asyncio, "sleep", _instant_sleep)
 
 
 def _make_config(**overrides) -> Config:
@@ -42,6 +51,7 @@ def _make_update_callback(data: str):
     update.callback_query.answer = AsyncMock()
     update.callback_query.message.reply_text = AsyncMock()
     update.callback_query.message.reply_document = AsyncMock()
+    update.callback_query.message.reply_venue = AsyncMock()
     return update
 
 
@@ -169,7 +179,6 @@ async def test_show_block_map_success(monkeypatch):
     monkeypatch.setattr(
         conversation, "geocode_many", AsyncMock(return_value={"123 BISHAN ST 11": (1.35, 103.83)})
     )
-    monkeypatch.setattr(conversation, "fetch_points_map_image", AsyncMock(return_value=b"fake-png"))
 
     update = _make_update_callback("show_blocks")
     context = _make_context(_make_config(google_maps_api_key="fake-key"))
@@ -178,7 +187,37 @@ async def test_show_block_map_success(monkeypatch):
     state = await conversation.show_block_map(update, context)
 
     assert state == conversation.CHOOSING_INTENT
-    update.callback_query.message.reply_document.assert_awaited_once()
+    update.callback_query.message.reply_venue.assert_awaited_once()
+    venue_kwargs = update.callback_query.message.reply_venue.await_args.kwargs
+    assert venue_kwargs["latitude"] == 1.35
+    assert venue_kwargs["longitude"] == 103.83
+    assert venue_kwargs["title"] == "123 Bishan St 11"
+    update.callback_query.message.reply_document.assert_not_awaited()
+
+
+async def test_show_block_map_sends_one_venue_per_geocoded_block(monkeypatch):
+    this_month = date.today().strftime("%Y-%m")
+    records = [
+        {"month": this_month, "flat_type": "4 ROOM", "resale_price": 500000, "block": "123", "street_name": "BISHAN ST 11"},
+        {"month": this_month, "flat_type": "4 ROOM", "resale_price": 510000, "block": "124", "street_name": "BISHAN ST 12"},
+        {"month": this_month, "flat_type": "4 ROOM", "resale_price": 520000, "block": "125", "street_name": "BISHAN ST 13"},
+    ]
+    geocoded = {
+        "123 BISHAN ST 11": (1.35, 103.83),
+        "124 BISHAN ST 12": (1.351, 103.831),
+        "125 BISHAN ST 13": (1.352, 103.832),
+    }
+    monkeypatch.setattr(conversation.local_store, "load_town_records", MagicMock(return_value=records))
+    monkeypatch.setattr(conversation, "geocode_many", AsyncMock(return_value=geocoded))
+
+    update = _make_update_callback("show_blocks")
+    context = _make_context(_make_config(google_maps_api_key="fake-key"))
+    context.user_data["last_query"] = {"intent": "buy", "towns": ["BISHAN"]}
+
+    state = await conversation.show_block_map(update, context)
+
+    assert state == conversation.CHOOSING_INTENT
+    assert update.callback_query.message.reply_venue.await_count == len(geocoded)
 
 
 async def test_show_block_map_no_addresses_found(monkeypatch):
@@ -205,8 +244,8 @@ async def test_show_block_map_geocoding_fails_gracefully(monkeypatch):
     state = await conversation.show_block_map(update, context)
 
     assert state == conversation.CHOOSING_INTENT
-    # progress message + failure message, no document sent
-    update.callback_query.message.reply_document.assert_not_awaited()
+    # progress message + failure message, no venues sent
+    update.callback_query.message.reply_venue.assert_not_awaited()
 
 
 _COMPARE_RECORDS = [
