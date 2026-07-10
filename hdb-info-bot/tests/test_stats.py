@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from hdb_bot.stats import parse_month, summarize
+from hdb_bot.stats import monthly_average_series, parse_month, summarize
 
 FIXTURES = Path(__file__).parent / "fixtures"
 TODAY = date(2026, 7, 15)
@@ -91,3 +91,38 @@ def test_summarize_single_record_gives_flat_quantiles():
     s = stats[0]
     assert s.count == 1
     assert s.min == s.max == s.mean == s.median == s.p25 == s.p75 == 500000.0
+
+
+def test_monthly_average_series_computes_mean_per_month_sorted():
+    records = [
+        {"month": "2026-02", "resale_price": 500000},
+        {"month": "2026-01", "resale_price": 400000},
+        {"month": "2026-01", "resale_price": 420000},
+    ]
+    series = monthly_average_series(records, price_field="resale_price", month_field="month", today=TODAY)
+    assert series == [("2026-01", 410000.0), ("2026-02", 500000.0)]
+
+
+def test_monthly_average_series_respects_window():
+    records = [
+        {"month": "2020-01", "resale_price": 100000},  # far outside any reasonable window
+        {"month": "2026-07", "resale_price": 600000},
+    ]
+    series = monthly_average_series(
+        records, price_field="resale_price", month_field="month", months_window=12, today=TODAY
+    )
+    assert series == [("2026-07", 600000.0)]
+
+
+def test_monthly_average_series_skips_missing_price_or_month():
+    records = [
+        {"month": "2026-06", "resale_price": None},
+        {"month": None, "resale_price": 500000},
+        {"month": "2026-06", "resale_price": 500000},
+    ]
+    series = monthly_average_series(records, price_field="resale_price", month_field="month", today=TODAY)
+    assert series == [("2026-06", 500000.0)]
+
+
+def test_monthly_average_series_empty_input():
+    assert monthly_average_series([], price_field="resale_price", month_field="month", today=TODAY) == []

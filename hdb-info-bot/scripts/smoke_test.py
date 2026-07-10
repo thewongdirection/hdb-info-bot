@@ -5,7 +5,7 @@ back through the exact same local-cache code path the bot uses.
 
 Run this once locally before deploying, and again after deploying, so you
 catch upstream schema drift or bad env vars before your users do. The first
-run downloads all 6 registered CSVs — expect it to take a minute or two.
+run downloads all 7 registered CSVs — expect it to take a minute or two.
 
 Usage:
     python scripts/smoke_test.py
@@ -25,7 +25,7 @@ from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv()
 
-from hdb_bot import local_store  # noqa: E402
+from hdb_bot import carparks, local_store  # noqa: E402
 from hdb_bot.data_sync import DataSyncer  # noqa: E402
 from hdb_bot.datasets import DATASETS_FOR_INTENT  # noqa: E402
 from hdb_bot.localities import resolve  # noqa: E402
@@ -64,8 +64,18 @@ async def main(town_text: str, force_sync: bool) -> None:
                 f"trend={s.trend_label} ({s.trend_pct})"
             )
 
+    print(f"\n4. Reading local carpark cache for town={match.towns[0]}...")
+    matched_carparks = carparks.get_carparks_for_towns([match.towns[0]])
+    print(f"   -> {len(matched_carparks)} carparks near {match.towns[0]}")
+    print("   Fetching live availability (real network call)...")
+    availability = await carparks.fetch_availability(api_key=os.environ.get("DATA_GOV_SG_API_KEY"))
+    print(f"   -> {len(availability)} carparks reporting live availability nationwide")
+    if matched_carparks:
+        enriched = carparks.join_availability(matched_carparks, availability)
+        print(f"   sample: {enriched[0]}")
+
     api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
-    print("\n4. Google Static Maps check...")
+    print("\n5. Google Static Maps check...")
     if not api_key:
         print("   GOOGLE_MAPS_API_KEY not set, skipping (bot will run text-only).")
     else:

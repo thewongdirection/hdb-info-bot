@@ -1,36 +1,61 @@
-"""Casual Singaporean-toned message templates.
+"""Friendly, professional message templates.
 
 Kept separate from stats.py so the number-crunching stays pure/testable and
-the "voice" of the bot can be tweaked here without touching logic.
+the bot's "voice" can be adjusted here without touching logic. Jargon/acronym
+explanations live in glossary.py; every substantive (data-bearing) reply
+ends with glossary.SOURCES_FOOTER, citing data.gov.sg as the data source and
+pointing users to HDB/CEA/MND for authoritative rules — this bot provides
+general market information only, not financial, legal, or property advice.
 """
 from __future__ import annotations
 
+from . import glossary
 from .stats import FlatTypeStats
 
-INTENT_LABELS = {"buy": "buy", "sell": "sell", "rent": "rent"}
+INTENT_LABELS = {
+    "buy": "buy", "sell": "sell", "rent": "rent", "carparks": "check carparks",
+    "compare": "compare districts",
+}
 
 _INTENT_VERB = {
-    "buy": "shopping for a place",
-    "sell": "sizing up your flat",
-    "rent": "hunting for a place to rent",
+    "buy": "looking to buy a flat",
+    "sell": "assessing your flat's value",
+    "rent": "looking to rent a flat",
+    "carparks": "looking for carpark information",
+    "compare": "comparing districts",
 }
 
 _TREND_EMOJI = {"up": "📈", "down": "📉", "flat": "➡️", "insufficient_data": ""}
 
+_STATS_TERMS_NOTE = (
+    "_“Median” is the middle transaction price; the “typical range” covers "
+    "the middle 50% of transactions. Send /glossary for definitions of these "
+    "and other HDB/property terms._"
+)
+
 
 def greeting() -> str:
     return (
-        "Eh hello there! 👋 I'm your HDB kaki — tell me, you looking to *buy*, "
-        "*sell*, or *rent* a flat?"
+        "Hello, and welcome! 👋 I'm your HDB resale and rental information "
+        "assistant. I can help you look at price trends for buying, "
+        "selling, or renting a flat, check nearby carpark availability, or "
+        "compare prices across a few districts. What would you like to do?\n\n"
+        f"{glossary_hint()}"
     )
 
 
 def ask_locality(intent: str) -> str:
-    verb = _INTENT_VERB.get(intent, "checking out")
+    verb = _INTENT_VERB.get(intent, "getting started")
+    if intent == "compare":
+        return (
+            f"Great, {verb}. Please enter a few areas separated by commas — "
+            "town names, postal codes, or district numbers can be mixed and "
+            "matched (for example, \"Bishan, Tampines, D19\")."
+        )
     return (
-        f"Steady, {verb} ah! Which area you keen on? Can just type the "
-        "town (e.g. \"Bishan\"), a postal code (e.g. \"560123\"), or a "
-        "district number (e.g. \"D19\" or \"19\")."
+        f"Great, {verb}. Which area are you interested in? You can enter a "
+        "town name (e.g. \"Bishan\"), a 6-digit postal code (e.g. "
+        "\"560123\"), or a district number (e.g. \"D19\" or \"19\")."
     )
 
 
@@ -38,20 +63,20 @@ def locality_not_found(raw_input: str, suggestions: list[str]) -> str:
     if suggestions:
         options = ", ".join(s.title() for s in suggestions)
         return (
-            f"Hmm, dunno what area {raw_input!r} is leh 🤔. You mean one of "
-            f"these: {options}? Try typing it again."
+            f"I couldn't quite place {raw_input!r}. Did you mean one of "
+            f"these: {options}? Please feel free to try again."
         )
     return (
-        f"Paiseh, cannot make out what area {raw_input!r} is. Try a town "
-        "name, 6-digit postal code, or district number (like D19)."
+        f"I wasn't able to match {raw_input!r} to a known area. Please try a "
+        "town name, a 6-digit postal code, or a district number (e.g. \"D19\")."
     )
 
 
 def no_data_message(towns: list[str]) -> str:
     town_list = ", ".join(t.title() for t in towns)
     return (
-        f"Wah, checked {town_list} but got very little or no recent "
-        "transactions in our data leh. Maybe try a nearby town instead?"
+        f"I checked {town_list} but found very few or no recent "
+        "transactions in the data. You might like to try a nearby town instead."
     )
 
 
@@ -68,9 +93,15 @@ def _fmt_flat_type(flat_type: str) -> str:
 def _trend_phrase(stat: FlatTypeStats, intent: str) -> str:
     emoji = _TREND_EMOJI[stat.trend_label]
     if stat.trend_label == "insufficient_data":
-        return "(not enough history yet for a trend)"
-    verb = "gone up" if stat.trend_label == "up" else "dropped" if stat.trend_label == "down" else "stayed flat"
-    return f"{emoji} {verb} {abs(stat.trend_pct):.1f}% vs. a year ago"
+        return "(not enough transaction history yet for a year-on-year trend)"
+    verb = (
+        "risen" if stat.trend_label == "up"
+        else "fallen" if stat.trend_label == "down"
+        else "remained broadly stable"
+    )
+    if stat.trend_label == "flat":
+        return f"{emoji} Prices have {verb} over the past year."
+    return f"{emoji} Prices have {verb} {abs(stat.trend_pct):.1f}% year-on-year."
 
 
 def format_stats_message(
@@ -83,7 +114,7 @@ def format_stats_message(
     town_list = ", ".join(t.title() for t in towns)
     unit = "/month" if intent == "rent" else ""
 
-    lines = [f"Ok here's the lobang for *{town_list}* (last {months_window} months):", ""]
+    lines = [f"Here is the resale price summary for *{town_list}* (last {months_window} months):", ""]
     if note:
         lines.append(f"ℹ️ {note}")
         lines.append("")
@@ -95,15 +126,20 @@ def format_stats_message(
             f"(typical range {_fmt_money(s.p25)}–{_fmt_money(s.p75)}{unit})"
         )
         lines.append(f"  Full range: {_fmt_money(s.min)} – {_fmt_money(s.max)}{unit}")
-        lines.append(f"  Trend: {_trend_phrase(s, intent)}")
+        lines.append(f"  {_trend_phrase(s, intent)}")
         lines.append("")
 
     if intent == "sell":
-        lines.append("Use the median for similar unit types as your starting ask price lah 👍")
+        lines.append("You may wish to use the median price for a similar unit type as a reference for your asking price.")
     elif intent == "buy":
-        lines.append("Confirm plus chop, that's roughly what similar units are going for 👍")
+        lines.append("This reflects typical recent prices for similar units in the area.")
     else:
-        lines.append("That's the going rate for similar units in the area 👍")
+        lines.append("This reflects the typical going rate for similar units in the area.")
+
+    lines.append("")
+    lines.append(_STATS_TERMS_NOTE)
+    lines.append("")
+    lines.append(glossary.SOURCES_FOOTER)
 
     return "\n".join(lines).strip()
 
@@ -115,9 +151,119 @@ def map_caption(legend: list[tuple[str, str]]) -> str:
     return "\n".join(lines)
 
 
+def no_maps_configured_message() -> str:
+    return "Map generation isn't enabled on this bot (no Google Maps key configured), so I can only provide the text summary for now."
+
+
+def run_a_search_first_message() -> str:
+    return "Please run a search first — send /start and choose an area before requesting the map."
+
+
+def geocoding_in_progress_message(count: int) -> str:
+    return f"One moment, I'm mapping out {count} block(s) for you... 🗺️ (this may take a few seconds the first time)"
+
+
+def block_map_no_data_message() -> str:
+    return "I couldn't find any blocks to plot for that search, unfortunately."
+
+
+def block_map_failed_message() -> str:
+    return "I wasn't able to map any of those blocks this time — data.gov.sg or Google Maps may be temporarily unavailable. Please try again shortly."
+
+
+def block_map_caption(towns: list[str], geocoded_count: int, total_count: int) -> str:
+    town_list = ", ".join(t.title() for t in towns)
+    lines = [
+        f"📍 This map shows {geocoded_count} of {total_count} HDB block(s) in "
+        f"*{town_list}* (the most-transacted blocks are shown first)."
+    ]
+    if geocoded_count < total_count:
+        lines.append(f"({total_count - geocoded_count} could not be located.)")
+    return "\n".join(lines)
+
+
+def no_carparks_message(towns: list[str]) -> str:
+    town_list = ", ".join(t.title() for t in towns)
+    return f"I checked {town_list} but couldn't find any HDB carparks there, unfortunately."
+
+
+def format_carpark_message(
+    towns: list[str], carparks: list[dict], note: str | None = None, shown_limit: int = 15
+) -> str:
+    town_list = ", ".join(t.title() for t in towns)
+    lines = [f"🅿️ Here are the carparks near *{town_list}*:", ""]
+    if note:
+        lines.append(f"ℹ️ {note}")
+        lines.append("")
+
+    for c in carparks[:shown_limit]:
+        address = c["address"].title()
+        lots = c.get("lots_available")
+        total = c.get("total_lots")
+        if lots is not None and total is not None:
+            lots_str = f"{lots}/{total} lots available"
+        else:
+            lots_str = "live availability currently unavailable"
+
+        flags = []
+        if c.get("free_parking", "").upper() not in ("", "NO"):
+            flags.append(f"free parking {c['free_parking'].lower()}")
+        if c.get("night_parking", "").upper() == "YES":
+            flags.append("night parking available")
+        flags_str = f" ({', '.join(flags)})" if flags else ""
+
+        lines.append(f"*{address}* — {lots_str}{flags_str}")
+
+    if len(carparks) > shown_limit:
+        lines.append(f"\n...and {len(carparks) - shown_limit} more (see the map for the full list).")
+
+    lines.append("")
+    lines.append(glossary.SOURCES_FOOTER)
+
+    return "\n".join(lines).strip()
+
+
+def carpark_map_caption(towns: list[str], count: int) -> str:
+    town_list = ", ".join(t.title() for t in towns)
+    return f"🅿️ {count} carpark(s) near *{town_list}* shown on the map."
+
+
+def compare_no_valid_localities_message(raw_entries: list[str]) -> str:
+    entries_list = ", ".join(repr(e) for e in raw_entries)
+    return (
+        f"I wasn't able to match any of these: {entries_list}. Please try "
+        "town names, postal codes, or district numbers, separated by commas."
+    )
+
+
+def compare_partial_failure_note(failed_entries: list[str]) -> str:
+    return f"ℹ️ I couldn't match: {', '.join(repr(e) for e in failed_entries)} — showing the results for the rest."
+
+
+def compare_too_many_note(dropped_count: int, max_entries: int) -> str:
+    return f"ℹ️ I've compared the first {max_entries} areas only ({dropped_count} more were not included)."
+
+
+def compare_no_data_message(labels: list[str]) -> str:
+    label_list = ", ".join(labels)
+    return f"I checked {label_list} but there is no recent resale data available for any of them, unfortunately."
+
+
+def compare_chart_caption(labels: list[str], months_window: int) -> str:
+    label_list = ", ".join(labels)
+    return (
+        f"📊 Average resale price by month, last {months_window} months — "
+        f"{label_list}.\n\n{glossary.SOURCES_FOOTER}"
+    )
+
+
+def glossary_hint() -> str:
+    return "Send /glossary at any time for definitions of HDB and property terms (e.g. MOP, COV, resale levy, PSF)."
+
+
 def error_message() -> str:
-    return "Eh paiseh, something went wrong on my end 🙈. Try again in a bit, or /start over."
+    return "I'm sorry, something went wrong on my end 🙈. Please try again shortly, or send /start to begin again."
 
 
 def cancelled_message() -> str:
-    return "No worries, cancelled! Send /start anytime you want to check HDB prices again."
+    return "No problem, your request has been cancelled. Send /start anytime you'd like to check HDB prices again."

@@ -16,7 +16,7 @@ from pathlib import Path
 
 from telegram.ext import Application, ContextTypes
 
-from . import local_store
+from . import carparks, local_store
 from .config import Config, load_config
 from .conversation import build_conversation_handler, error_handler
 from .data_sync import DataSyncer
@@ -32,6 +32,7 @@ async def _sync_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     results = await syncer.sync_all()
     if any(r.changed for r in results):
         local_store.invalidate_cache()
+        carparks.invalidate_cache()
         logger.info("Local dataset cache refreshed after sync")
 
 
@@ -42,6 +43,7 @@ async def _post_init(application: Application) -> None:
     logger.info("Running initial dataset sync (this can take a minute the first time)...")
     results = await syncer.sync_all()
     local_store.invalidate_cache()
+    carparks.invalidate_cache()
     for r in results:
         if r.error:
             logger.warning("Initial sync issue for %s: %s", r.label, r.error)

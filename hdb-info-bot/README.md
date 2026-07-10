@@ -1,23 +1,43 @@
 # hdb-info-bot
 
-A Telegram bot with a casual Singaporean tone that helps you **buy**, **sell**,
-or **rent** an HDB flat. Tell it a town, postal code, or district number, and
-it pulls real transaction data from [data.gov.sg](https://data.gov.sg/datasets?topics=housing),
-crunches recent price/rent stats by flat type, and drops a Google Map with
-pins for the areas you asked about.
+A Telegram bot with a friendly, professional tone that helps you **buy**,
+**sell**, or **rent** an HDB flat, or find **carpark** availability nearby.
+Tell it a town, postal code, or district number, and it pulls real
+transaction data from [data.gov.sg](https://data.gov.sg/datasets?topics=housing),
+summarizes recent price/rent stats by flat type, and drops a Google Map with
+pins for the areas you asked about — plus, on request, a downloadable map
+with every individual HDB block behind those stats plotted.
 
 ```
 You: /start
-Bot: Eh hello there! 👋 I'm your HDB kaki — you looking to buy, sell, or rent?
+Bot: Hello, and welcome! 👋 I'm your HDB resale and rental information
+     assistant. I can help you look at price trends for buying, selling,
+     or renting a flat, check nearby carpark availability, or compare
+     prices across a few districts. What would you like to do?
 You: [Buy 🏠]
-Bot: Steady, shopping for a place ah! Which area you keen on?
+Bot: Great, looking to buy a flat. Which area are you interested in?
 You: Bishan
-Bot: Ok here's the lobang for Bishan (last 12 months):
+Bot: Here is the resale price summary for Bishan (last 12 months):
      4 Room — 27 transaction(s)
        Median: $520,000  (typical range $505,000–$535,000)
        ...
      [map image with a pin + legend]
+     [📍 Plot blocks on map]  [🔁 New search]
 ```
+
+Every substantive reply ends with a source citation and a disclaimer —
+data comes from data.gov.sg, and users are pointed to HDB, CEA, and MND for
+authoritative rules (see "Tone, jargon, and citations" below). Send
+`/glossary` at any time for plain-English explanations of terms like MOP,
+COV, resale levy, or PSF.
+
+Tapping **📍 Plot blocks on map** geocodes every HDB block behind those
+stats and sends back a downloadable image with all of them pinned. Picking
+**Carparks 🅿️** instead asks for an area the same way, then lists nearby
+HDB carparks with live lots-available counts and a map. Picking
+**Compare Districts 📊** asks for a few areas at once (comma-separated) and
+sends back a line chart comparing their monthly average resale price —
+this one needs no Google Maps key at all, the chart is rendered locally.
 
 ## How it works
 
@@ -46,6 +66,43 @@ Bot: Ok here's the lobang for Bishan (last 12 months):
 - **Map**: Google Static Maps with one lettered pin per matched town + a text
   legend (Google's marker labels only support a single character, so the
   price itself can't be printed on the pin — see [`hdb_bot/maps.py`](hdb_bot/maps.py)).
+- **Block-level map (on request)**: the **📍 Plot blocks on map** button
+  geocodes the actual HDB blocks (address strings — dataset has no
+  coordinates) behind the last stats shown, using the Google Geocoding API,
+  and sends back a downloadable image with every block pinned. Results are
+  cached to disk forever (blocks don't move) in
+  [`hdb_bot/geocoding.py`](hdb_bot/geocoding.py), so repeat queries for the
+  same area are instant and don't re-spend API quota.
+- **Carparks**: a 4th top-level option alongside buy/sell/rent. Combines
+  data.gov.sg's static
+  [HDB Carpark Information](https://data.gov.sg/dataset/hdb-carpark-information)
+  dataset (synced locally like everything else) with its **real-time**
+  [Carpark Availability API](https://data.gov.sg/datasets/d_ca933a644e55d34fe21f28b8052fac63/view)
+  (queried live, since lots-available changes minute to minute and can't be
+  cached) — see [`hdb_bot/carparks.py`](hdb_bot/carparks.py). Carpark
+  locations come as SVY21 coordinates, converted to lat/lng for free with no
+  API call via [`hdb_bot/svy21.py`](hdb_bot/svy21.py).
+- **Compare Districts**: a 5th top-level option that takes several
+  comma-separated areas (towns/postal codes/district numbers, freely mixed)
+  and charts their monthly average resale price side by side over
+  `CHART_MONTHS_WINDOW` months (default 24), capped at 6 areas per chart for
+  legibility. Rendered locally with matplotlib
+  ([`hdb_bot/charts.py`](hdb_bot/charts.py)) — no external chart service and
+  no Google Maps key needed, so this feature always works. Areas that fail
+  to resolve are reported but don't block the rest of the comparison.
+- **Tone, jargon, and citations**: the bot speaks in a friendly-but-professional
+  voice throughout (see [`hdb_bot/formatting.py`](hdb_bot/formatting.py)) and
+  is explicit that it provides **general market information, not financial,
+  legal, or property advice**. Every substantive reply (price stats, carpark
+  listings, comparison charts) ends with a citation of data.gov.sg as the
+  data source and a pointer to HDB, CEA, and MND for authoritative rules —
+  deliberately *not* asserting specific figures like MOP duration or resale
+  levy amounts, since those vary by case and change over time; instead
+  `/glossary` (any time, any point in the conversation —
+  [`hdb_bot/glossary.py`](hdb_bot/glossary.py)) explains the concepts
+  (MOP, COV, resale levy, OTP, EIP, PSF, CPF, remaining lease, and the
+  statistical terms used in the stats messages) and directs users to the
+  relevant official body for current specifics.
 
 ## Project layout
 
@@ -56,11 +113,17 @@ hdb_bot/
   local_store.py    reads the local CSVs, indexed by town, for the conversation flow
   conversation.py   ConversationHandler: /start -> intent -> locality -> results
   localities.py     postal code / district / town-name resolution
-  stats.py          median/percentile/trend calculations
-  maps.py           Google Static Maps pin + legend builder
-  formatting.py     Singlish-toned message templates
+  stats.py          median/percentile/trend/monthly-average calculations
+  maps.py           Google Static Maps pin + legend builder (lettered + unlabeled-cloud)
+  geocoding.py      Google Geocoding API client + permanent disk cache, for the block map
+  svy21.py          SVY21 <-> WGS84 coordinate conversion (carpark locations), no API needed
+  carparks.py       carpark info (local cache) + live availability (real-time API), joined
+  charts.py         matplotlib line chart for the district price-comparison feature
+  formatting.py     friendly-professional message templates + citation footer
+  glossary.py       HDB/property jargon explanations (/glossary command) + source citation
   config.py, main.py
-data/               local dataset cache (gitignored, created by data_sync.py; ~90MB)
+data/               local dataset cache (gitignored, created by data_sync.py; ~90MB,
+                    plus geocode_cache.json which grows slowly as blocks get plotted)
 tests/              pytest regression suite (mocked HTTP; no real API calls by default)
 scripts/smoke_test.py   manual script that runs a REAL sync + hits Google Maps
 deploy/hdb-bot.service  systemd unit for the Oracle Cloud VM deployment
@@ -96,23 +159,29 @@ live-query bot — but it's still good practice:
    choose **Developer key** for a personal project like this.
 3. Copy the key into `DATA_GOV_SG_API_KEY`.
 
-### 1c. Google Maps Static API key
+### 1c. Google Maps API key (Static Maps + Geocoding)
+
+One key, two APIs enabled on it — Static Maps renders every map image;
+Geocoding is only used by the opt-in "📍 Plot blocks on map" button.
 
 1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and
    create a new project (e.g. "hdb-info-bot").
 2. Enable billing on the project (Cloud Console → Billing). This sounds
-   scary but Google gives **$200/month free credit**, and Static Maps costs
-   ~$2 per 1,000 loads — a personal bot won't come close to that.
-3. Go to **APIs & Services → Library**, search for **Maps Static API**,
-   click Enable.
+   scary but Google gives **$200/month free credit**; Static Maps costs
+   ~$2/1,000 loads and Geocoding ~$5/1,000 requests, and geocoding results
+   are cached to disk forever (a given HDB block only ever gets geocoded
+   once) — a personal bot won't come close to the free credit.
+3. Go to **APIs & Services → Library**, search for and Enable **Maps Static
+   API**, then do the same for **Geocoding API**.
 4. Go to **APIs & Services → Credentials → Create Credentials → API key**.
-5. Click **Restrict key**: under "API restrictions" limit it to *Maps Static
-   API* only. Under "Application restrictions" you can restrict by IP once
-   you know your server's outbound IP (Oracle VM has a fixed public IP;
-   Cloud Run's outbound IP isn't fixed unless you set up a static egress —
-   for a personal project, API-restriction alone is normally enough).
+5. Click **Restrict key**: under "API restrictions" limit it to those two
+   APIs. Under "Application restrictions" you can restrict by IP once you
+   know your server's outbound IP (Oracle VM has a fixed public IP; Cloud
+   Run's outbound IP isn't fixed unless you set up a static egress — for a
+   personal project, API-restriction alone is normally enough).
 6. Copy the key into `GOOGLE_MAPS_API_KEY`. If you skip this whole section,
-   the bot still works — it just replies with text stats and no map image.
+   the bot still works — it just replies with text stats and no map images,
+   and the "Plot blocks on map" button tells the user maps aren't set up.
 
 ---
 
@@ -129,7 +198,7 @@ cp .env.example .env
 python -m hdb_bot.main
 ```
 
-The first run downloads all 6 datasets (~90MB total, a minute or two) before
+The first run downloads all 7 datasets (~90MB total, a minute or two) before
 the bot starts serving — that's expected, it's the initial sync described
 above. Message your bot on Telegram and walk through Buy → a town name →
 confirm you get stats back (and a map, if you configured `GOOGLE_MAPS_API_KEY`).
@@ -248,13 +317,40 @@ free quota.
 
 ## 6. Known limitations / things to revisit
 
-- **Map pins are town-centroid, not per-block.** The datasets only carry a
-  `town` field, not exact coordinates, so pins mark the general town area —
-  matches the data's own granularity.
-- **Price can't be printed directly on the pin.** Google Static Maps marker
+- **Regulatory content is deliberately general, not authoritative.** The
+  `/glossary` explanations describe *concepts* (what MOP or a resale levy
+  is) without stating specific durations, dollar amounts, or percentages,
+  since those vary by flat type/scheme and change over time — the bot
+  points users to HDB, CEA, and MND for current specifics rather than
+  risking a stale or case-specific figure being presented as universal.
+  This bot is not a substitute for professional or official advice.
+- **The automatic map is town-centroid, not per-block.** The datasets only
+  carry a `town` field, not exact coordinates, so the pin sent right after
+  stats marks the general town area — matches the data's own granularity.
+  Use **📍 Plot blocks on map** for actual per-block pins (see below).
+- **Price can't be printed directly on a pin.** Google Static Maps marker
   labels are a single character only; a future enhancement could render a
   custom marker icon (e.g. via a text-to-image service) with the price baked
   in, at the cost of an extra external dependency.
+- **Block-map geocoding is capped at `MAX_BLOCKS_TO_PLOT` (60, in
+  `conversation.py`)**, picking the most-transacted blocks first, to keep
+  the button's latency and the map's pin count reasonable — a caption on the
+  result says how many of the total were actually plotted.
+- **Carpark "nearest town" is approximate.** The carpark dataset has no
+  `town` field either, only coordinates — each carpark is assigned to
+  whichever of the 26 HDB town centroids is numerically closest, which is
+  usually right but can be off for carparks near a town boundary.
+- **Carpark availability is genuinely real-time and never cached** (lots
+  change minute to minute), unlike every other dataset the bot uses — so
+  that one call at request time is the sole exception to the "no live
+  data.gov.sg calls" design, and if that API is briefly down the bot still
+  shows facility info, just without live counts.
+- **Compare Districts is resale-only** (average *resale price*, not rent) —
+  matches the "average prices" framing of the request; a rent-comparison
+  chart would be a straightforward extension of the same code if wanted
+  later. Capped at `MAX_COMPARE_ENTRIES` (6, in `conversation.py`) areas per
+  chart; months with zero transactions for a given area are left as gaps
+  in its line rather than interpolated or shown as zero.
 - **District → town mapping is approximate.** Singapore's postal districts
   are sector groupings that don't align cleanly with HDB town boundaries;
   a few central districts are mostly private housing and get mapped to the

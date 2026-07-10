@@ -1,4 +1,5 @@
 from hdb_bot import formatting
+from hdb_bot.glossary import SOURCES_FOOTER
 from hdb_bot.stats import FlatTypeStats
 
 
@@ -32,7 +33,7 @@ def test_insufficient_data_trend_has_no_percentage():
     message = formatting.format_stats_message(
         "buy", ["BISHAN"], [_stat(trend_label="insufficient_data", trend_pct=None)]
     )
-    assert "not enough history" in message
+    assert "not enough transaction history" in message
 
 
 def test_locality_not_found_with_and_without_suggestions():
@@ -41,3 +42,38 @@ def test_locality_not_found_with_and_without_suggestions():
 
     without_suggestions = formatting.locality_not_found("asdf", [])
     assert "asdf" in without_suggestions
+
+
+def test_stats_message_includes_sources_footer():
+    message = formatting.format_stats_message("buy", ["BISHAN"], [_stat()])
+    assert SOURCES_FOOTER in message
+
+
+def test_carpark_message_includes_sources_footer():
+    carparks = [{"address": "blk 1 test st", "lots_available": 5, "total_lots": 10,
+                 "free_parking": "NO", "night_parking": "YES"}]
+    message = formatting.format_carpark_message(["BISHAN"], carparks)
+    assert SOURCES_FOOTER in message
+
+
+def test_compare_chart_caption_includes_sources_footer():
+    caption = formatting.compare_chart_caption(["Bishan", "Tampines"], 24)
+    assert SOURCES_FOOTER in caption
+
+
+def test_greeting_mentions_glossary_command():
+    assert "/glossary" in formatting.greeting()
+
+
+def test_tone_no_longer_uses_singlish_particles():
+    # Regression guard for the professional-tone rewrite — these Singlish
+    # particles should no longer appear in the bot's core messages.
+    text = "\n".join([
+        formatting.greeting(),
+        formatting.ask_locality("buy"),
+        formatting.format_stats_message("buy", ["BISHAN"], [_stat()]),
+        formatting.cancelled_message(),
+        formatting.error_message(),
+    ])
+    for particle in (" lah", " leh", " lor", "kaki", "paiseh", "steady,"):
+        assert particle not in text.lower()

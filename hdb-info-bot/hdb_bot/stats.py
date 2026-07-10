@@ -40,6 +40,63 @@ def parse_month(value: str) -> tuple[int, int] | None:
     return None
 
 
+def filter_recent(
+    records: list[dict],
+    month_field: str,
+    months_window: int = 12,
+    today: date | None = None,
+) -> list[dict]:
+    """Return only the records within the last `months_window` months.
+
+    Uses the same cutoff definition as `summarize()`'s headline stats, so
+    callers that need the exact same "recent" record set (e.g. to plot the
+    blocks behind those stats on a map) can filter independently of price
+    grouping.
+    """
+    today = today or date.today()
+    now_index = _month_index(today.year, today.month)
+    cutoff_index = now_index - months_window
+
+    recent = []
+    for r in records:
+        parsed = parse_month(str(r.get(month_field, "")))
+        if parsed is None:
+            continue
+        if _month_index(*parsed) > cutoff_index:
+            recent.append(r)
+    return recent
+
+
+def monthly_average_series(
+    records: list[dict],
+    price_field: str,
+    month_field: str,
+    months_window: int = 24,
+    today: date | None = None,
+) -> list[tuple[str, float]]:
+    """Return [(month_str, average_price), ...], chronologically sorted, for
+    every month in the window that has at least one record.
+
+    Used for the multi-district price-comparison chart (see charts.py) —
+    months with no data are simply omitted rather than zero-filled or
+    interpolated, since either would misrepresent the underlying data.
+    """
+    recent = filter_recent(records, month_field, months_window, today)
+
+    by_month: dict[tuple[int, int], list[float]] = {}
+    for r in recent:
+        parsed = parse_month(str(r.get(month_field, "")))
+        price = r.get(price_field)
+        if parsed is None or price is None:
+            continue
+        by_month.setdefault(parsed, []).append(float(price))
+
+    return [
+        (f"{year:04d}-{month:02d}", statistics.mean(prices))
+        for (year, month), prices in sorted(by_month.items())
+    ]
+
+
 def _quantiles(values: list[float]) -> tuple[float, float, float]:
     """Return (p25, median, p75). Handles tiny sample sizes gracefully."""
     if len(values) == 1:

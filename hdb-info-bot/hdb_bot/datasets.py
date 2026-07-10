@@ -17,9 +17,12 @@ from dataclasses import dataclass
 class DatasetInfo:
     resource_id: str
     label: str
-    group: str  # "resale" | "rental"
-    price_field: str
-    month_field: str
+    group: str  # "resale" | "rental" | "carpark_info"
+    # price_field/month_field are only meaningful for the resale/rental
+    # groups that stats.py operates on; the carpark_info dataset has
+    # neither, so both default to None.
+    price_field: str | None = None
+    month_field: str | None = None
 
 
 # The resale market has been split across 5 successive datasets over the
@@ -62,7 +65,17 @@ RENTAL_DATASETS: list[DatasetInfo] = [
     ),
 ]
 
-ALL_DATASETS: list[DatasetInfo] = RESALE_DATASETS + RENTAL_DATASETS
+# Static carpark facility info (address, SVY21 coordinates, parking system,
+# free/night parking flags). Rarely changes, so it's synced like everything
+# else above — the live lots-available count is a separate real-time API
+# that can't be cached this way (see carparks.py).
+CARPARK_INFO_DATASET = DatasetInfo(
+    resource_id="d_23f946fa557947f93a8043bbef41dd09",
+    label="HDB Carpark Information",
+    group="carpark_info",
+)
+
+ALL_DATASETS: list[DatasetInfo] = RESALE_DATASETS + RENTAL_DATASETS + [CARPARK_INFO_DATASET]
 
 # buy/sell both look at the resale market from opposite sides of the same trade.
 DATASETS_FOR_INTENT: dict[str, list[DatasetInfo]] = {
