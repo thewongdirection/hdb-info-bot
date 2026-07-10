@@ -19,8 +19,9 @@ def _make_config(**overrides) -> Config:
         run_mode="polling",
         webhook_url=None,
         port=8080,
-        cache_ttl_seconds=21600,
         recent_months_window=12,
+        sync_interval_hours=24,
+        data_dir=None,
     )
     defaults.update(overrides)
     return Config(**defaults)
@@ -41,10 +42,10 @@ def _make_update_callback(data: str):
     return update
 
 
-def _make_context(config: Config, datagov_client=None):
+def _make_context(config: Config):
     context = MagicMock()
     context.user_data = {}
-    context.bot_data = {"config": config, "datagov_client": datagov_client or AsyncMock()}
+    context.bot_data = {"config": config}
     return context
 
 
@@ -81,14 +82,14 @@ async def test_locality_received_unresolvable_reprompts_without_crashing():
     update.message.reply_text.assert_awaited_once()
 
 
-async def test_locality_received_success_sends_stats():
+async def test_locality_received_success_sends_stats(monkeypatch):
     records = json.loads((FIXTURES / "sample_resale_records.json").read_text())
-    datagov_client = AsyncMock()
-    datagov_client.fetch_town_records.return_value = records
+    load_mock = MagicMock(return_value=records)
+    monkeypatch.setattr(conversation.local_store, "load_town_records", load_mock)
 
     # No Google Maps key configured -> should skip the map without erroring.
     config = _make_config(recent_months_window=12, google_maps_api_key=None)
-    context = _make_context(config, datagov_client=datagov_client)
+    context = _make_context(config)
     context.user_data["intent"] = "buy"
     update = _make_update_message("Bishan")
 
@@ -96,13 +97,13 @@ async def test_locality_received_success_sends_stats():
 
     assert state == conversation.CHOOSING_INTENT
     assert update.message.reply_text.await_count >= 2  # stats message + "new search" prompt
-    datagov_client.fetch_town_records.assert_awaited()
+    load_mock.assert_called()
 
 
-async def test_locality_received_no_data_reprompts():
-    datagov_client = AsyncMock()
-    datagov_client.fetch_town_records.return_value = []
-    context = _make_context(_make_config(), datagov_client=datagov_client)
+async def test_locality_received_no_data_reprompts(monkeypatch):
+    load_mock = MagicMock(return_value=[])
+    monkeypatch.setattr(conversation.local_store, "load_town_records", load_mock)
+    context = _make_context(_make_config())
     context.user_data["intent"] = "rent"
     update = _make_update_message("Punggol")
 

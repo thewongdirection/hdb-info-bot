@@ -1,6 +1,7 @@
 """The bot's ConversationHandler: /start -> pick intent -> pick locality -> results."""
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -14,8 +15,8 @@ from telegram.ext import (
     filters,
 )
 
-from . import formatting
-from .datagov_client import DATASET_FOR_INTENT, DataGovClient
+from . import formatting, local_store
+from .datasets import DATASETS_FOR_INTENT
 from .localities import LocalityMatch, LocalityNotFound, resolve
 from .maps import fetch_map_image
 from .stats import summarize
@@ -71,17 +72,19 @@ async def locality_received(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return ASKING_LOCALITY
 
     config = context.bot_data["config"]
-    client: DataGovClient = context.bot_data["datagov_client"]
-    dataset = DATASET_FOR_INTENT[intent]
+    datasets = DATASETS_FOR_INTENT[intent]
 
+    # Reads the local cache that data_sync.py keeps refreshed — no live
+    # data.gov.sg call happens here, so this stays fast and off the rate limit.
     all_records: list[dict] = []
     for town in match.towns:
-        all_records.extend(await client.fetch_town_records(dataset.resource_id, town))
+        town_records = await asyncio.to_thread(local_store.load_town_records, datasets, town)
+        all_records.extend(town_records)
 
     stats = summarize(
         all_records,
-        price_field=dataset.price_field,
-        month_field=dataset.month_field,
+        price_field=datasets[0].price_field,
+        month_field=datasets[0].month_field,
         months_window=config.recent_months_window,
     )
 

@@ -21,8 +21,9 @@ class Config:
     run_mode: str
     webhook_url: str | None
     port: int
-    cache_ttl_seconds: float
     recent_months_window: int
+    sync_interval_hours: float
+    data_dir: str | None
 
 
 def load_config() -> Config:
@@ -45,6 +46,7 @@ def load_config() -> Config:
         run_mode=run_mode,
         webhook_url=webhook_url,
         port=int(os.environ.get("PORT", "8080")),
-        cache_ttl_seconds=float(os.environ.get("CACHE_TTL_SECONDS", "21600")),
         recent_months_window=int(os.environ.get("RECENT_MONTHS_WINDOW", "12")),
+        sync_interval_hours=float(os.environ.get("SYNC_INTERVAL_HOURS", "24")),
+        data_dir=os.environ.get("DATA_DIR", "").strip() or None,
     )

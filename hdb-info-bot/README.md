@@ -21,10 +21,23 @@ Bot: Ok here's the lobang for Bishan (last 12 months):
 
 ## How it works
 
-- **Data**: [data.gov.sg](https://data.gov.sg)'s `datastore_search` API —
-  the [Resale Flat Prices](https://data.gov.sg/datasets/d_8b84c4ee58e3cfc0ece0d773c8ca6abc/view)
-  dataset for buy/sell, [Renting Out of Flats](https://data.gov.sg/datasets/d_c9f57187485a850908655db0e8cfe651/view)
-  for rent.
+- **Data**: every dataset in data.gov.sg's
+  [Resale Flat Prices collection](https://data.gov.sg/collections/189/view)
+  (5 datasets spanning 1990 to present — the resale market has been split
+  across successive datasets over the years) plus
+  [Renting Out of Flats](https://data.gov.sg/datasets/d_c9f57187485a850908655db0e8cfe651/view)
+  for rent — see the full list in [`hdb_bot/datasets.py`](hdb_bot/datasets.py).
+  This covers everything at
+  [data.gov.sg/datasets?topics=housing&resultId=189](https://data.gov.sg/datasets?topics=housing&resultId=189).
+- **Local-cache architecture**: the bot does **not** query data.gov.sg live
+  when a user messages it. [`hdb_bot/data_sync.py`](hdb_bot/data_sync.py)
+  downloads a full local CSV copy of every dataset above (using data.gov.sg's
+  bulk download flow) once at startup and then on a repeating schedule
+  (`SYNC_INTERVAL_HOURS`, default 24h), checking each dataset's metadata
+  first so unchanged datasets are skipped. [`hdb_bot/local_store.py`](hdb_bot/local_store.py)
+  indexes those local CSVs by town in memory and serves records to the
+  conversation flow — so every user message is fast and never subject to
+  data.gov.sg's rate limits.
 - **Locality resolution**: free text ("Bishan", "near AMK"), 6-digit postal
   codes, or district numbers ("D19") are all mapped down to HDB's 26 town
   names — see [`hdb_bot/localities.py`](hdb_bot/localities.py).
@@ -37,9 +50,19 @@ Bot: Ok here's the lobang for Bishan (last 12 months):
 ## Project layout
 
 ```
-hdb_bot/            bot package (conversation flow, data client, stats, maps, formatting)
+hdb_bot/
+  datasets.py       registry of every data.gov.sg dataset the bot uses
+  data_sync.py      downloads/refreshes local CSV copies (metadata-aware, skips unchanged)
+  local_store.py    reads the local CSVs, indexed by town, for the conversation flow
+  conversation.py   ConversationHandler: /start -> intent -> locality -> results
+  localities.py     postal code / district / town-name resolution
+  stats.py          median/percentile/trend calculations
+  maps.py           Google Static Maps pin + legend builder
+  formatting.py     Singlish-toned message templates
+  config.py, main.py
+data/               local dataset cache (gitignored, created by data_sync.py; ~90MB)
 tests/              pytest regression suite (mocked HTTP; no real API calls by default)
-scripts/smoke_test.py   manual script that hits the REAL data.gov.sg/Maps APIs
+scripts/smoke_test.py   manual script that runs a REAL sync + hits Google Maps
 deploy/hdb-bot.service  systemd unit for the Oracle Cloud VM deployment
 Dockerfile          container build for the Cloud Run deployment
 ```
@@ -60,9 +83,12 @@ Dockerfile          container build for the Cloud Run deployment
 
 ### 1b. data.gov.sg API key (recommended, not strictly required)
 
-The `datastore_search` API works without a key today, but data.gov.sg began
-enforcing tighter rate limits on unauthenticated requests from Dec 2025
-onwards, so getting a key is worth the two minutes:
+data.gov.sg's APIs work without a key today, but they began enforcing
+tighter rate limits on unauthenticated requests from Dec 2025 onwards, so
+getting a key is worth the two minutes. The bot only calls data.gov.sg from
+its background sync job (once at startup, then every `SYNC_INTERVAL_HOURS`),
+never per-user-message, so this matters far less here than it would for a
+live-query bot — but it's still good practice:
 
 1. Go to [data.gov.sg](https://data.gov.sg) and sign up (top-right login
    modal → Sign Up), preferably with an email you can access an OTP on.
@@ -103,8 +129,10 @@ cp .env.example .env
 python -m hdb_bot.main
 ```
 
-Message your bot on Telegram and walk through Buy → a town name → confirm
-you get stats back (and a map, if you configured `GOOGLE_MAPS_API_KEY`).
+The first run downloads all 6 datasets (~90MB total, a minute or two) before
+the bot starts serving — that's expected, it's the initial sync described
+above. Message your bot on Telegram and walk through Buy → a town name →
+confirm you get stats back (and a map, if you configured `GOOGLE_MAPS_API_KEY`).
 
 ## 3. Run the tests
 
@@ -185,9 +213,10 @@ free quota.
      --source . \
      --region asia-southeast1 \
      --allow-unauthenticated \
-     --min-instances=0 \
+     --min-instances=1 \
      --set-env-vars RUN_MODE=webhook,TELEGRAM_BOT_TOKEN=<token>,DATA_GOV_SG_API_KEY=<key>,GOOGLE_MAPS_API_KEY=<key>
    ```
+   (`--min-instances=1` here on purpose — see the cold-start caveat in step 6.)
    Note the resulting service URL, e.g. `https://hdb-info-bot-xxxxx-as.a.run.app`.
 4. Set `WEBHOOK_URL` to that URL and redeploy (or set it in the same command
    above once you know the URL — Cloud Run URLs are deterministic per
@@ -197,10 +226,23 @@ free quota.
    curl "https://api.telegram.org/bot<token>/setWebhook?url=<service-url>"
    curl "https://api.telegram.org/bot<token>/getWebhookInfo"   # should show your URL, no pending errors
    ```
-6. `--min-instances=0` keeps it in the free tier (scale-to-zero); the
-   tradeoff is a few seconds of cold-start latency on the first message
-   after idle. Bump to `--min-instances=1` if you want to eliminate that,
-   but note that then incurs a small always-on cost outside the free tier.
+6. **Cold-start caveat specific to this bot**: each fresh Cloud Run instance
+   starts with an empty `data/` directory (container filesystems aren't
+   persisted across instances), so the blocking startup sync has to
+   re-download all ~90MB of datasets before that instance can answer its
+   first message — this can take a minute, not a few seconds. With the more
+   usual `--min-instances=0` (scale-to-zero, strictly free), that
+   minute-long sync would happen on *every* cold start, which is a bad user
+   experience for a chat bot. Two ways to handle it:
+   - `--min-instances=1` (used above) keeps one instance warm permanently —
+     a small always-on cost outside the free tier but cheap (a fraction of
+     a fraction of a cent/hour for the smallest Cloud Run tier) — so the
+     sync only re-runs on `SYNC_INTERVAL_HOURS` in the background, never
+     blocking a user.
+   - Mount a Cloud Storage bucket as a volume (Cloud Run gen2 supports
+     `--add-volume`) at the `data/` path so the cache survives across cold
+     starts, letting you go back to `--min-instances=0` and stay fully free
+     — more setup, not included in this guide.
 
 ---
 
@@ -217,8 +259,14 @@ free quota.
   are sector groupings that don't align cleanly with HDB town boundaries;
   a few central districts are mostly private housing and get mapped to the
   nearest HDB town with an explanatory note in the bot's reply.
-- **In-memory cache only.** Fine for a single always-on process (the Oracle
-  VM); on Cloud Run each cold instance starts with an empty cache, which is
-  still fine since the datasets update roughly monthly.
-- **data.gov.sg rate limits**: get a Developer API key (section 1b) if you
-  hit 429s; consider a Production key if this bot gets heavy use.
+- **Local dataset cache needs ~90MB of disk** and a minute or two for the
+  first sync. Fine for the Oracle VM (persists across restarts); on Cloud
+  Run this interacts with cold starts — see the caveat in section 5.
+- **Historical resale eras are combined at read time.** The 5 resale-era
+  datasets share `month`/`town`/`flat_type`/`resale_price` but differ in a
+  few other columns (e.g. `remaining_lease` is absent before 2015, and
+  formatted differently even after) — fine since the bot only ever reads
+  the 4 shared fields, but worth knowing if you extend `stats.py`.
+- **data.gov.sg rate limits**: get a Developer API key (section 1b) if the
+  background sync starts hitting 429s; consider a Production key if you run
+  many bot instances against the same key.
