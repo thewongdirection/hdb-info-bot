@@ -78,10 +78,13 @@ def test_fuzzy_ambiguous_typo_raises_with_suggestions():
     assert set(exc_info.value.suggestions) == {"BISHAN", "YISHUN"}
 
 
-def test_no_match_raises_with_suggestions():
+def test_no_match_raises_with_empty_suggestions():
+    # Empty (not a generic filler list) is deliberate: conversation.py uses
+    # this exact signal to try a geocoding-based nearest-town suggestion
+    # instead, only falling back to a bare message if that's unavailable.
     with pytest.raises(LocalityNotFound) as exc_info:
         resolve("xyzabc123notaplace")
-    assert exc_info.value.suggestions  # some fallback suggestions offered
+    assert exc_info.value.suggestions == []
 
 
 def test_empty_input_raises():

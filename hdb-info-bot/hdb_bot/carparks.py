@@ -17,7 +17,7 @@ import httpx
 
 from .data_sync import default_data_dir
 from .datasets import CARPARK_INFO_DATASET
-from .maps import TOWN_CENTROIDS
+from .maps import nearest_town
 from .svy21 import svy21_to_wgs84
 
 logger = logging.getLogger(__name__)
@@ -32,17 +32,6 @@ def invalidate_cache() -> None:
     """Drop the in-memory carpark list so the next read re-parses from disk."""
     global _carpark_cache
     _carpark_cache = None
-
-
-def _nearest_town(lat: float, lng: float) -> str:
-    """Carparks have no `town` field, only coordinates — approximate by
-    whichever HDB town centroid is closest. Singapore is small/flat enough
-    that plain squared-degree distance is fine for "nearest of 26", no need
-    for a real haversine calculation."""
-    return min(
-        TOWN_CENTROIDS,
-        key=lambda town: (TOWN_CENTROIDS[town][0] - lat) ** 2 + (TOWN_CENTROIDS[town][1] - lng) ** 2,
-    )
 
 
 def _load_all_carparks(data_dir: Path) -> list[dict]:
@@ -70,7 +59,7 @@ def _load_all_carparks(data_dir: Path) -> list[dict]:
                     "short_term_parking": (row.get("short_term_parking") or "").strip(),
                     "free_parking": (row.get("free_parking") or "").strip(),
                     "night_parking": (row.get("night_parking") or "").strip(),
-                    "nearest_town": _nearest_town(lat, lng),
+                    "nearest_town": nearest_town(lat, lng),
                 }
             )
     return carparks

@@ -1,7 +1,9 @@
-"""Town-centroid coordinates for HDB towns.
+"""Town-centroid coordinates for HDB towns, and a nearest-town lookup.
 
 Used by carparks.py to approximate a carpark's town from its coordinates
-(carpark records carry lat/lng but no town field) — see `_nearest_town`.
+(carpark records carry lat/lng but no town field), and by conversation.py to
+suggest an HDB town when a user's free-text area doesn't match anything —
+see `nearest_town`.
 """
 from __future__ import annotations
 
@@ -36,3 +38,14 @@ TOWN_CENTROIDS: dict[str, tuple[float, float]] = {
     "WOODLANDS": (1.4382, 103.7891),
     "YISHUN": (1.4304, 103.8354),
 }
+
+
+def nearest_town(lat: float, lng: float) -> str:
+    """The HDB town whose centroid is closest to (lat, lng).
+
+    Singapore is small/flat enough that plain squared-degree distance is
+    fine for "nearest of 26" — no need for a real haversine calculation."""
+    return min(
+        TOWN_CENTROIDS,
+        key=lambda town: (TOWN_CENTROIDS[town][0] - lat) ** 2 + (TOWN_CENTROIDS[town][1] - lng) ** 2,
+    )

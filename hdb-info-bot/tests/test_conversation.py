@@ -94,6 +94,41 @@ async def test_locality_received_unresolvable_reprompts_without_crashing():
 
     assert state == conversation.ASKING_LOCALITY
     update.message.reply_text.assert_awaited_once()
+    sent_text = update.message.reply_text.await_args.args[0]
+    assert "wasn't able to match" in sent_text
+    assert update.message.reply_text.await_args.kwargs["reply_markup"] is not None
+
+
+async def test_locality_received_unresolvable_with_maps_key_suggests_nearest_town(monkeypatch):
+    update = _make_update_message("xyzabc123notaplace")
+    context = _make_context(_make_config(google_maps_api_key="fake-key"))
+    context.user_data["intent"] = "buy"
+    monkeypatch.setattr(
+        conversation, "geocode_many",
+        AsyncMock(return_value={"xyzabc123notaplace": (1.3691, 103.8454)}),  # ANG MO KIO centroid
+    )
+
+    state = await conversation.locality_received(update, context)
+
+    assert state == conversation.ASKING_LOCALITY
+    update.message.reply_text.assert_awaited_once()
+    sent_text = update.message.reply_text.await_args.args[0]
+    assert "Ang Mo Kio" in sent_text
+    assert update.message.reply_text.await_args.kwargs["reply_markup"] is not None
+
+
+async def test_locality_received_unresolvable_geocoding_finds_nothing_falls_back(monkeypatch):
+    update = _make_update_message("xyzabc123notaplace")
+    context = _make_context(_make_config(google_maps_api_key="fake-key"))
+    context.user_data["intent"] = "buy"
+    monkeypatch.setattr(conversation, "geocode_many", AsyncMock(return_value={}))
+
+    state = await conversation.locality_received(update, context)
+
+    assert state == conversation.ASKING_LOCALITY
+    update.message.reply_text.assert_awaited_once()
+    sent_text = update.message.reply_text.await_args.args[0]
+    assert "wasn't able to match" in sent_text
 
 
 async def test_locality_received_success_sends_stats(monkeypatch):
@@ -539,3 +574,16 @@ async def test_glossary_command_replies_with_glossary_text_then_main_menu():
     assert "hdb.gov.sg" in glossary_text
     menu_text = update.effective_message.reply_text.await_args_list[1].args[0]
     assert "What would you like to do?" in menu_text
+
+
+def test_restart_is_a_fallback_so_it_works_from_any_state():
+    # The "Main Menu" button (callback_data="restart") is attached to
+    # ASKING_LOCALITY-state prompts, so it must be reachable from there too —
+    # registering it only under CHOOSING_INTENT would silently no-op it.
+    handler = conversation.build_conversation_handler()
+    fallback_patterns = [
+        getattr(h, "pattern", None).pattern
+        for h in handler.fallbacks
+        if getattr(h, "pattern", None) is not None
+    ]
+    assert any(p == "^restart$" for p in fallback_patterns)

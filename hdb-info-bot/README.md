@@ -72,7 +72,15 @@ this one needs no Google Maps key at all, the chart is rendered locally.
   doesn't need to hold the full ~1.2M-row dataset in memory at once.
 - **Locality resolution**: free text ("Bishan", "near AMK"), 6-digit postal
   codes, or district numbers ("D19") are all mapped down to HDB's 26 town
-  names — see [`hdb_bot/localities.py`](hdb_bot/localities.py).
+  names — see [`hdb_bot/localities.py`](hdb_bot/localities.py). If nothing
+  matches at all (no town/alias/postal-code/district match, and nothing
+  close enough for a fuzzy guess), and a `GOOGLE_MAPS_API_KEY` is
+  configured, the bot geocodes the raw text and suggests whichever HDB
+  town's centroid is nearest, rather than a generic "did you mean" list.
+- **Always a way back**: every prompt that's waiting on a reply (asking for
+  a locality, a not-found reprompt, an invalid compare-list reprompt) has a
+  "🏠 Main Menu" button alongside it, so the user is never stuck without
+  retyping or using `/cancel`.
 - **Stats**: median/mean/percentiles per flat type over the last 12 months,
   plus a year-on-year trend — see [`hdb_bot/stats.py`](hdb_bot/stats.py).
 - **Block-level map (on request)**: the **📍 Plot blocks on map** button

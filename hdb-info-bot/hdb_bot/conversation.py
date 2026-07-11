@@ -22,6 +22,7 @@ from .datasets import DATASETS_FOR_INTENT
 from .geocoding import GeocodeCache, geocode_many
 from .glossary import format_full_glossary
 from .localities import LocalityMatch, LocalityNotFound, resolve
+from .maps import nearest_town
 from .stats import filter_recent, group_by_flat_type, monthly_average_series, summarize
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,13 @@ _RESULTS_FOLLOWUP_KEYBOARD = InlineKeyboardMarkup(
         [InlineKeyboardButton("📍 Plot blocks on map", callback_data="show_blocks")],
         [InlineKeyboardButton("📊 View price trend chart", callback_data="show_trend_chart")],
     ]
+)
+
+# Attached to every prompt that's waiting on the user to type something
+# (locality entry, reprompts after an unresolved/invalid input) so there's
+# always a one-tap way out back to the start, not just /cancel.
+_MAIN_MENU_ONLY_KEYBOARD = InlineKeyboardMarkup(
+    [[InlineKeyboardButton("🏠 Main Menu", callback_data="restart")]]
 )
 
 
@@ -116,9 +124,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def restart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Kept only so any "🔁 New search" button already sent in existing chat
-    history (from before every branch auto-returned to the main menu) still
-    works — no new message shows this button anymore."""
+    """The "🏠 Main Menu" bail-out button attached to every prompt that's
+    waiting on user input — registered as a fallback so it works from any
+    state (see build_conversation_handler)."""
     query = update.callback_query
     await query.answer()
     await _send_main_menu(query.message)
@@ -130,8 +138,29 @@ async def intent_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     await query.answer()
     intent = query.data.split(":", 1)[1]
     context.user_data["intent"] = intent
-    await query.message.reply_text(formatting.ask_locality(intent))
+    await query.message.reply_text(formatting.ask_locality(intent), reply_markup=_MAIN_MENU_ONLY_KEYBOARD)
     return ASKING_LOCALITY
+
+
+async def _suggest_town_via_geocoding(text: str, context: ContextTypes.DEFAULT_TYPE) -> str | None:
+    """Last-resort fallback when the input didn't string-match anything at
+    all (no town/alias/postal-code/district match, and no fuzzy candidates):
+    geocode the raw text and suggest whichever HDB town's centroid is
+    closest. Returns None (silently — caller falls back to the plain
+    not-found message) if no Maps key is configured, or if geocoding fails
+    or can't place the input at all."""
+    config = context.bot_data["config"]
+    if not config.google_maps_api_key:
+        return None
+    cache = GeocodeCache()
+    geocoded = await geocode_many(
+        [text], config.google_maps_api_key, cache, client=context.bot_data.get("http_client")
+    )
+    coords = geocoded.get(text)
+    if coords is None:
+        return None
+    lat, lng = coords
+    return nearest_town(lat, lng)
 
 
 async def locality_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -144,7 +173,17 @@ async def locality_received(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     try:
         match: LocalityMatch = resolve(text)
     except LocalityNotFound as exc:
-        await update.message.reply_text(formatting.locality_not_found(text, exc.suggestions))
+        if not exc.suggestions:
+            suggested_town = await _suggest_town_via_geocoding(text, context)
+            if suggested_town:
+                await update.message.reply_text(
+                    formatting.geocode_nearest_suggestion(text, suggested_town),
+                    reply_markup=_MAIN_MENU_ONLY_KEYBOARD,
+                )
+                return ASKING_LOCALITY
+        await update.message.reply_text(
+            formatting.locality_not_found(text, exc.suggestions), reply_markup=_MAIN_MENU_ONLY_KEYBOARD
+        )
         return ASKING_LOCALITY
 
     if intent == "carparks":
@@ -171,7 +210,9 @@ async def _handle_price_query(
 
     if not stats:
         await update.message.reply_text(formatting.no_data_message(match.towns))
-        await update.message.reply_text(formatting.ask_locality(intent))
+        await update.message.reply_text(
+            formatting.ask_locality(intent), reply_markup=_MAIN_MENU_ONLY_KEYBOARD
+        )
         return ASKING_LOCALITY
 
     message = formatting.format_stats_message(
@@ -205,7 +246,9 @@ async def _handle_carparks_query(
     matched = await asyncio.to_thread(carparks.get_carparks_for_towns, match.towns)
     if not matched:
         await update.message.reply_text(formatting.no_carparks_message(match.towns))
-        await update.message.reply_text(formatting.ask_locality("carparks"))
+        await update.message.reply_text(
+            formatting.ask_locality("carparks"), reply_markup=_MAIN_MENU_ONLY_KEYBOARD
+        )
         return ASKING_LOCALITY
 
     availability = await carparks.fetch_availability(
@@ -242,7 +285,9 @@ async def _handle_compare_query(
     raw_entries = [e.strip() for e in text.split(",") if e.strip()]
 
     if not raw_entries:
-        await update.message.reply_text(formatting.compare_no_valid_localities_message([text]))
+        await update.message.reply_text(
+            formatting.compare_no_valid_localities_message([text]), reply_markup=_MAIN_MENU_ONLY_KEYBOARD
+        )
         return ASKING_LOCALITY
 
     dropped_count = 0
@@ -259,7 +304,9 @@ async def _handle_compare_query(
             failed.append(entry)
 
     if not resolved:
-        await update.message.reply_text(formatting.compare_no_valid_localities_message(failed))
+        await update.message.reply_text(
+            formatting.compare_no_valid_localities_message(failed), reply_markup=_MAIN_MENU_ONLY_KEYBOARD
+        )
         return ASKING_LOCALITY
 
     # buy/sell both read the resale dataset group — a comparison of "average
@@ -290,7 +337,9 @@ async def _handle_compare_query(
     if not series:
         labels = [label.title() for label, _ in resolved]
         await update.message.reply_text(formatting.compare_no_data_message(labels))
-        await update.message.reply_text(formatting.ask_locality("compare"))
+        await update.message.reply_text(
+            formatting.ask_locality("compare"), reply_markup=_MAIN_MENU_ONLY_KEYBOARD
+        )
         return ASKING_LOCALITY
 
     if failed:
@@ -485,13 +534,16 @@ def build_conversation_handler() -> ConversationHandler:
                 CallbackQueryHandler(show_block_map, pattern=r"^show_blocks$"),
                 CallbackQueryHandler(show_price_trend_chart, pattern=r"^show_trend_chart$"),
                 CallbackQueryHandler(show_carpark_map, pattern=r"^carpark:.+$"),
-                CallbackQueryHandler(restart, pattern=r"^restart$"),
             ],
             ASKING_LOCALITY: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, locality_received),
             ],
         },
         fallbacks=[
+            # In fallbacks (not a per-state handler) so the "🏠 Main Menu"
+            # button works no matter which state it's pressed from —
+            # ASKING_LOCALITY included.
+            CallbackQueryHandler(restart, pattern=r"^restart$"),
             CommandHandler("cancel", cancel),
             CommandHandler("glossary", glossary_command),
         ],

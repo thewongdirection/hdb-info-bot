@@ -44,6 +44,12 @@ def test_locality_not_found_with_and_without_suggestions():
     assert "asdf" in without_suggestions
 
 
+def test_geocode_nearest_suggestion_mentions_input_and_town():
+    message = formatting.geocode_nearest_suggestion("velocity mall", "ANG MO KIO")
+    assert "velocity mall" in message
+    assert "Ang Mo Kio" in message
+
+
 def test_stats_message_includes_sources_footer():
     message = formatting.format_stats_message("buy", ["BISHAN"], [_stat()])
     assert SOURCES_FOOTER in message

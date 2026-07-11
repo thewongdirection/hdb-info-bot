@@ -84,6 +84,15 @@ def locality_not_found(raw_input: str, suggestions: list[str]) -> str:
     )
 
 
+def geocode_nearest_suggestion(raw_input: str, nearest_town: str) -> str:
+    town = nearest_town.title()
+    return (
+        f"I couldn't match {raw_input!r} to a known HDB town directly, but "
+        f"the closest one on the map looks to be {town}. Type \"{town}\" to "
+        "go with that, or try another area."
+    )
+
+
 def no_data_message(towns: list[str]) -> str:
     town_list = ", ".join(t.title() for t in towns)
     return (

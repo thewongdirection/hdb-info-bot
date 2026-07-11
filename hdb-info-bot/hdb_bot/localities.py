@@ -219,8 +219,9 @@ def resolve(text: str) -> LocalityMatch:
             suggestions=resolved_towns,
         )
 
-    # Nothing matched at all — suggest a few well-known towns as a starting point.
-    raise LocalityNotFound(
-        f"Couldn't figure out what area {raw!r} means",
-        suggestions=["ANG MO KIO", "TAMPINES", "BEDOK", "YISHUN"],
-    )
+    # Nothing matched at all. Deliberately no generic filler suggestions
+    # here — conversation.py tries a geocoding-based "nearest actual HDB
+    # town" suggestion for this exact case (empty suggestions signals that
+    # nothing string-matched), and only falls back to a bare "not found"
+    # message if that isn't available or doesn't find anything either.
+    raise LocalityNotFound(f"Couldn't figure out what area {raw!r} means", suggestions=[])
