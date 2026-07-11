@@ -185,6 +185,27 @@ def no_maps_configured_message() -> str:
     return "Map generation isn't enabled on this bot (no Google Maps key configured), so I can only provide the text summary for now."
 
 
+def ask_ai_prompt_message() -> str:
+    return (
+        "Ask me anything about HDB resale/rental prices or carpark availability — "
+        "e.g. \"how have 4-room prices in Tampines moved this year?\" or "
+        "\"compare Bishan and Yishun resale prices\". I'll only answer using the "
+        "real data.gov.sg figures, never a guess."
+    )
+
+
+def ai_not_configured_message() -> str:
+    return "The AI Q&A feature isn't enabled on this bot (no Anthropic API key configured) — please use the menu options instead."
+
+
+def ai_thinking_message() -> str:
+    return "One moment, let me look that up... 🤖"
+
+
+def ai_unavailable_message() -> str:
+    return "I wasn't able to reach the AI service just now — please try again shortly, or use the menu options instead."
+
+
 def run_a_search_first_message() -> str:
     return "Please run a search first — send /start and choose an area before requesting the map."
 

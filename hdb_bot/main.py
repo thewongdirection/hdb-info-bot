@@ -9,8 +9,9 @@ serving, and then repeats in the background on `SYNC_INTERVAL_HOURS` — see
 data_sync.py and local_store.py. The local SQLite cache and the chart
 renderer are also eagerly warmed at startup (and the SQLite cache again
 after any sync that changes a file) so a user's first query is never the
-one paying the ingest/render cost. A shared HTTP client and geocode cache
-live in bot_data for the app's whole lifetime — see _post_init.
+one paying the ingest/render cost. A shared HTTP client, geocode cache, and
+(if ANTHROPIC_API_KEY is set) Anthropic client all live in bot_data for the
+app's whole lifetime — see _post_init.
 """
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import httpx
+from anthropic import AsyncAnthropic
 from telegram.ext import Application, ContextTypes
 
 from . import carparks, local_store
@@ -53,6 +55,9 @@ async def _post_shutdown(application: Application) -> None:
     client: httpx.AsyncClient | None = application.bot_data.get("http_client")
     if client is not None:
         await client.aclose()
+    anthropic_client: AsyncAnthropic | None = application.bot_data.get("anthropic_client")
+    if anthropic_client is not None:
+        await anthropic_client.close()
 
 
 async def _post_init(application: Application) -> None:
@@ -70,6 +75,12 @@ async def _post_init(application: Application) -> None:
     # re-reads the whole cache file from disk, and two concurrent requests
     # each calling save() could silently overwrite each other's new entries.
     application.bot_data["geocode_cache"] = await asyncio.to_thread(GeocodeCache)
+
+    if config.anthropic_api_key:
+        application.bot_data["anthropic_client"] = AsyncAnthropic(api_key=config.anthropic_api_key)
+        logger.info("AI Q&A ('Ask AI') is enabled.")
+    else:
+        logger.info("ANTHROPIC_API_KEY not set -- 'Ask AI' will tell users it isn't configured.")
 
     logger.info("Running initial dataset sync (this can take a minute the first time)...")
     results = await syncer.sync_all()

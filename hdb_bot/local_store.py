@@ -32,6 +32,7 @@ actually changes), at which point the *next* read re-ingests from disk.
 """
 from __future__ import annotations
 
+import asyncio
 import csv
 import logging
 import sqlite3
@@ -216,3 +217,17 @@ def load_town_records(
         return records
     finally:
         conn.close()
+
+
+async def load_town_records_multi(datasets: list[DatasetInfo], towns: list[str]) -> list[dict]:
+    """Fetch every town's records concurrently rather than one at a time —
+    each is an independent SQLite read, so there's no reason to serialize
+    them when a locality resolves to several towns (e.g. a district).
+    Shared by conversation.py and ai_assistant.py."""
+    per_town = await asyncio.gather(
+        *(asyncio.to_thread(load_town_records, datasets, town) for town in towns)
+    )
+    all_records: list[dict] = []
+    for town_records in per_town:
+        all_records.extend(town_records)
+    return all_records

@@ -16,18 +16,18 @@ from telegram.ext import (
     filters,
 )
 
-from . import carparks, formatting, local_store
+from . import ai_assistant, carparks, formatting, local_store
 from .charts import build_price_comparison_chart
 from .datasets import DATASETS_FOR_INTENT
 from .geocoding import geocode_many
-from .glossary import format_full_glossary
+from .glossary import SOURCES_FOOTER, format_full_glossary
 from .localities import LocalityMatch, LocalityNotFound, resolve
 from .maps import nearest_town
 from .stats import filter_recent, group_by_flat_type, monthly_average_series, summarize
 
 logger = logging.getLogger(__name__)
 
-CHOOSING_INTENT, ASKING_LOCALITY = range(2)
+CHOOSING_INTENT, ASKING_LOCALITY, ASKING_AI_QUESTION = range(3)
 
 # How many unique blocks (by transaction count) to geocode/plot per request —
 # keeps geocoding latency and the number of venue messages sent reasonable.
@@ -56,6 +56,7 @@ _INTENT_KEYBOARD = InlineKeyboardMarkup(
             InlineKeyboardButton("Carparks 🅿️", callback_data="intent:carparks"),
         ],
         [InlineKeyboardButton("Compare Districts 📊", callback_data="intent:compare")],
+        [InlineKeyboardButton("Ask AI 🤖", callback_data="intent:ask_ai")],
     ]
 )
 
@@ -95,19 +96,6 @@ async def _reprompt_locality(message, text: str) -> int:
     attached, and stay in ASKING_LOCALITY."""
     await message.reply_text(text, reply_markup=_MAIN_MENU_ONLY_KEYBOARD)
     return ASKING_LOCALITY
-
-
-async def _load_records_for_towns(datasets: list, towns: list[str]) -> list[dict]:
-    """Fetch every town's records concurrently rather than one at a time —
-    each is an independent SQLite read, so there's no reason to serialize
-    them when a locality resolves to several towns (e.g. a district)."""
-    per_town = await asyncio.gather(
-        *(asyncio.to_thread(local_store.load_town_records, datasets, town) for town in towns)
-    )
-    all_records: list[dict] = []
-    for town_records in per_town:
-        all_records.extend(town_records)
-    return all_records
 
 
 def _build_trend_chart_bytes(
@@ -155,6 +143,13 @@ async def intent_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     await query.answer()
     intent = query.data.split(":", 1)[1]
     context.user_data["intent"] = intent
+
+    if intent == "ask_ai":
+        await query.message.reply_text(
+            formatting.ask_ai_prompt_message(), reply_markup=_MAIN_MENU_ONLY_KEYBOARD
+        )
+        return ASKING_AI_QUESTION
+
     return await _reprompt_locality(query.message, formatting.ask_locality(intent))
 
 
@@ -206,6 +201,30 @@ async def locality_received(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return await _handle_price_query(update, context, match, intent)
 
 
+async def ai_question_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    text = update.message.text or ""
+    config = context.bot_data["config"]
+
+    if not config.anthropic_api_key:
+        return await _bail_to_main_menu(update.message, formatting.ai_not_configured_message())
+
+    await update.message.reply_text(formatting.ai_thinking_message())
+    try:
+        answer = await ai_assistant.ask(
+            text,
+            anthropic_client=context.bot_data["anthropic_client"],
+            data_gov_sg_api_key=config.data_gov_sg_api_key,
+            http_client=context.bot_data.get("http_client"),
+        )
+    except Exception:
+        logger.exception("AI assistant call failed")
+        return await _bail_to_main_menu(update.message, formatting.ai_unavailable_message())
+
+    await update.message.reply_text(f"{answer}\n\n{SOURCES_FOOTER}")
+    await _send_main_menu(update.message)
+    return CHOOSING_INTENT
+
+
 async def _handle_price_query(
     update: Update, context: ContextTypes.DEFAULT_TYPE, match: LocalityMatch, intent: str
 ) -> int:
@@ -214,7 +233,7 @@ async def _handle_price_query(
 
     # Reads the local cache that data_sync.py keeps refreshed — no live
     # data.gov.sg call happens here, so this stays fast and off the rate limit.
-    all_records = await _load_records_for_towns(datasets, match.towns)
+    all_records = await local_store.load_town_records_multi(datasets, match.towns)
 
     stats = summarize(
         all_records,
@@ -321,7 +340,7 @@ async def _handle_compare_query(
     datasets = DATASETS_FOR_INTENT["buy"]
 
     async def _points_for(label: str, match: LocalityMatch) -> tuple[str, list[tuple[str, float]]]:
-        all_records = await _load_records_for_towns(datasets, match.towns)
+        all_records = await local_store.load_town_records_multi(datasets, match.towns)
         # monthly_average_series is real CPU work over potentially tens of
         # thousands of records — run it in a thread so it doesn't block the
         # event loop (and every other district's concurrent fetch/compute).
@@ -377,7 +396,7 @@ async def show_block_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     towns = last_query["towns"]
     datasets = DATASETS_FOR_INTENT[intent]
 
-    all_records = await _load_records_for_towns(datasets, towns)
+    all_records = await local_store.load_town_records_multi(datasets, towns)
 
     recent = filter_recent(
         all_records, month_field=datasets[0].month_field, months_window=config.recent_months_window
@@ -443,7 +462,7 @@ async def show_price_trend_chart(update: Update, context: ContextTypes.DEFAULT_T
     datasets = DATASETS_FOR_INTENT[intent]
     config = context.bot_data["config"]
 
-    all_records = await _load_records_for_towns(datasets, towns)
+    all_records = await local_store.load_town_records_multi(datasets, towns)
 
     price_unit_suffix = "per month" if intent == "rent" else ""
     title = "Average Rental Price Trend by Flat Type" if intent == "rent" else "Average Resale Price Trend by Flat Type"
@@ -522,13 +541,16 @@ def build_conversation_handler() -> ConversationHandler:
         entry_points=[CommandHandler("start", start)],
         states={
             CHOOSING_INTENT: [
-                CallbackQueryHandler(intent_chosen, pattern=r"^intent:(buy|sell|rent|carparks|compare)$"),
+                CallbackQueryHandler(intent_chosen, pattern=r"^intent:(buy|sell|rent|carparks|compare|ask_ai)$"),
                 CallbackQueryHandler(show_block_map, pattern=r"^show_blocks$"),
                 CallbackQueryHandler(show_price_trend_chart, pattern=r"^show_trend_chart$"),
                 CallbackQueryHandler(show_carpark_map, pattern=r"^carpark:.+$"),
             ],
             ASKING_LOCALITY: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, locality_received),
+            ],
+            ASKING_AI_QUESTION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, ai_question_received),
             ],
         },
         fallbacks=[

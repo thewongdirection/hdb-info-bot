@@ -18,6 +18,7 @@ class Config:
     telegram_bot_token: str
     data_gov_sg_api_key: str | None
     google_maps_api_key: str | None
+    anthropic_api_key: str | None
     run_mode: str
     webhook_url: str | None
     port: int
@@ -44,6 +45,7 @@ def load_config() -> Config:
         telegram_bot_token=token,
         data_gov_sg_api_key=os.environ.get("DATA_GOV_SG_API_KEY", "").strip() or None,
         google_maps_api_key=os.environ.get("GOOGLE_MAPS_API_KEY", "").strip() or None,
+        anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", "").strip() or None,
         run_mode=run_mode,
         webhook_url=webhook_url,
         port=int(os.environ.get("PORT", "8080")),

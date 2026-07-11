@@ -7,7 +7,8 @@ district number, and it pulls real transaction data from
 [data.gov.sg](https://data.gov.sg/datasets?topics=housing) and summarizes
 recent price/rent stats by flat type — plus, on request, the individual HDB
 blocks behind those stats as interactive map pins you can pan, zoom, and
-open in your own maps app.
+open in your own maps app. An optional **Ask AI 🤖** mode lets you ask the
+same data questions in plain English instead of tapping through menus.
 
 ```
 You: /start
@@ -121,6 +122,22 @@ this one needs no Google Maps key at all, the chart is rendered locally.
   ([`hdb_bot/charts.py`](hdb_bot/charts.py)) — no external chart service and
   no Google Maps key needed, so this feature always works. Areas that fail
   to resolve are reported but don't block the rest of the comparison.
+- **Ask AI**: a 6th top-level option, enabled only when `ANTHROPIC_API_KEY`
+  is configured (otherwise the button tells the user the feature isn't
+  enabled). Lets a user ask a data question in plain English — e.g. "how
+  have 4-room prices in Tampines moved this year?" or "compare Bishan and
+  Yishun" — instead of tapping through the buy/sell/rent/compare menus. See
+  [`hdb_bot/ai_assistant.py`](hdb_bot/ai_assistant.py): Claude is used purely
+  as an **orchestrator**, via tool-calling, over four tools that each wrap
+  the exact same deterministic `stats.py`/`local_store.py`/`carparks.py`
+  code the button-based flow already uses (`get_price_stats`,
+  `get_price_trend`, `compare_localities`, `get_carpark_availability`). The
+  model decides which tool(s) to call and phrases the final answer from
+  their real, computed JSON results — its system prompt explicitly forbids
+  estimating or recalling a number from its own knowledge, and forbids
+  stating specific regulatory figures (MOP duration, resale levy, etc.),
+  matching this bot's existing concepts-not-specifics approach. It never
+  invents a price, trend, or lots-available figure.
 - **Tone, jargon, and citations**: the bot speaks in a friendly-but-professional
   voice throughout (see [`hdb_bot/formatting.py`](hdb_bot/formatting.py)) and
   is explicit that it provides **general market information, not financial,
@@ -223,6 +240,20 @@ address into lat/lng coordinates for the venue pins it sends.
    the bot still works — the "Plot blocks on map" button just tells the
    user maps aren't set up.
 
+### 1d. Anthropic API key (Ask AI)
+
+Only used by the opt-in "Ask AI 🤖" button, to let a user ask a data
+question in plain English instead of tapping through the menus. Claude only
+orchestrates calls to the bot's own deterministic code — see "Ask AI" under
+"How it works" above for the anti-hallucination design.
+
+1. Go to the [Anthropic Console](https://console.anthropic.com/) and sign up
+   or log in.
+2. Go to **API Keys → Create Key**.
+3. Copy the key into `ANTHROPIC_API_KEY`. If you skip this section, the bot
+   still works — the "Ask AI" button just tells the user the feature isn't
+   enabled.
+
 ---
 
 ## 2. Run it locally
@@ -283,7 +314,7 @@ all**.
    source .venv/bin/activate
    pip install -r requirements.txt
    cp .env.example .env
-   nano .env        # fill in TELEGRAM_BOT_TOKEN, DATA_GOV_SG_API_KEY, GOOGLE_MAPS_API_KEY
+   nano .env        # fill in TELEGRAM_BOT_TOKEN, DATA_GOV_SG_API_KEY, GOOGLE_MAPS_API_KEY, ANTHROPIC_API_KEY
    chmod 600 .env
    exit              # back to your sudo user
    ```
@@ -324,8 +355,10 @@ free quota.
      --region asia-southeast1 \
      --allow-unauthenticated \
      --min-instances=1 \
-     --set-env-vars RUN_MODE=webhook,TELEGRAM_BOT_TOKEN=<token>,DATA_GOV_SG_API_KEY=<key>,GOOGLE_MAPS_API_KEY=<key>
+     --set-env-vars RUN_MODE=webhook,TELEGRAM_BOT_TOKEN=<token>,DATA_GOV_SG_API_KEY=<key>,GOOGLE_MAPS_API_KEY=<key>,ANTHROPIC_API_KEY=<key>
    ```
+   (`ANTHROPIC_API_KEY` is optional — omit it and the "Ask AI" button just
+   tells users the feature isn't enabled.)
    (`--min-instances=1` here on purpose — see the cold-start caveat in step 6.)
    Note the resulting service URL, e.g. `https://hdb-info-bot-xxxxx-as.a.run.app`.
 4. Set `WEBHOOK_URL` to that URL and redeploy (or set it in the same command
@@ -407,3 +440,9 @@ free quota.
 - **data.gov.sg rate limits**: get a Developer API key (section 1b) if the
   background sync starts hitting 429s; consider a Production key if you run
   many bot instances against the same key.
+- **Ask AI is opt-in and costs money per question** (Anthropic API usage),
+  unlike every other feature which is free after setup — the button is
+  hidden behind `ANTHROPIC_API_KEY` being configured specifically so a
+  deployer opts into that cost deliberately. Capped at
+  `MAX_TOOL_ITERATIONS` (5, in `ai_assistant.py`) tool-calling rounds per
+  question to bound worst-case cost/latency on an unusual query.

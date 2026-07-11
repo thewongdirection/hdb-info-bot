@@ -25,6 +25,7 @@ def _make_config(**overrides) -> Config:
         telegram_bot_token="test-token",
         data_gov_sg_api_key=None,
         google_maps_api_key=None,
+        anthropic_api_key=None,
         run_mode="polling",
         webhook_url=None,
         port=8080,
@@ -591,3 +592,56 @@ def test_restart_is_a_fallback_so_it_works_from_any_state():
         if getattr(h, "pattern", None) is not None
     ]
     assert any(p == "^restart$" for p in fallback_patterns)
+
+
+async def test_intent_chosen_ask_ai_prompts_for_a_question():
+    update = _make_update_callback("intent:ask_ai")
+    context = _make_context(_make_config())
+
+    state = await conversation.intent_chosen(update, context)
+
+    assert state == conversation.ASKING_AI_QUESTION
+    update.callback_query.message.reply_text.assert_awaited_once()
+
+
+async def test_ai_question_received_not_configured_bails_to_main_menu():
+    update = _make_update_message("how much is a 4-room in bishan?")
+    context = _make_context(_make_config(anthropic_api_key=None))
+
+    state = await conversation.ai_question_received(update, context)
+
+    assert state == conversation.CHOOSING_INTENT
+    all_text = " ".join(str(c.args) for c in update.message.reply_text.await_args_list)
+    assert "isn't enabled" in all_text or "not enabled" in all_text.lower()
+
+
+async def test_ai_question_received_success_sends_answer_and_footer(monkeypatch):
+    ask_mock = AsyncMock(return_value="4-room flats in Bishan averaged $520,000 recently.")
+    monkeypatch.setattr(conversation.ai_assistant, "ask", ask_mock)
+
+    update = _make_update_message("how much is a 4-room in bishan?")
+    context = _make_context(_make_config(anthropic_api_key="fake-key"))
+    context.bot_data["anthropic_client"] = MagicMock()
+
+    state = await conversation.ai_question_received(update, context)
+
+    assert state == conversation.CHOOSING_INTENT
+    ask_mock.assert_awaited_once()
+    all_text = " ".join(str(c.args) for c in update.message.reply_text.await_args_list)
+    assert "$520,000" in all_text
+    assert "data.gov.sg" in all_text  # SOURCES_FOOTER
+
+
+async def test_ai_question_received_failure_bails_to_main_menu(monkeypatch):
+    ask_mock = AsyncMock(side_effect=RuntimeError("boom"))
+    monkeypatch.setattr(conversation.ai_assistant, "ask", ask_mock)
+
+    update = _make_update_message("how much is a 4-room in bishan?")
+    context = _make_context(_make_config(anthropic_api_key="fake-key"))
+    context.bot_data["anthropic_client"] = MagicMock()
+
+    state = await conversation.ai_question_received(update, context)
+
+    assert state == conversation.CHOOSING_INTENT
+    all_text = " ".join(str(c.args) for c in update.message.reply_text.await_args_list)
+    assert "wasn't able to reach" in all_text.lower()
