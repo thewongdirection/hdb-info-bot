@@ -197,8 +197,15 @@ def resolve(text: str) -> LocalityMatch:
     if len(contains_hits) == 1:
         return LocalityMatch(towns=contains_hits, method="town_exact", raw_input=raw)
 
+    # Word-boundary, not a bare substring check: a handful of aliases are
+    # short, generic word fragments ("TOWN", "BB", "BT", ...) that can
+    # appear glued inside an unrelated or misspelled word purely by chance
+    # (e.g. "TOWN" is literally the tail end of "QUEENSTOWN" — a bare
+    # substring check would misroute any typo of a real town to whatever
+    # that fragment aliases to, before fuzzy matching ever gets a chance to
+    # find the actual closest town).
     for alias, town in TOWN_ALIASES.items():
-        if alias in cleaned:
+        if re.search(rf"\b{re.escape(alias)}\b", cleaned):
             return LocalityMatch(towns=[town], method="town_alias", raw_input=raw)
 
     # 6. Fuzzy match (typos, partial words) against towns + aliases.

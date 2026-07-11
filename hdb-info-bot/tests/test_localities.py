@@ -96,3 +96,25 @@ def test_all_district_towns_are_valid_hdb_towns():
     for towns in DISTRICT_TO_TOWNS.values():
         for town in towns:
             assert town in HDB_TOWNS
+
+
+def test_queenstown_typo_is_not_shadowed_by_the_generic_town_alias():
+    # Regression test: a bare substring check for the "TOWN" alias (->
+    # CENTRAL AREA) used to intercept any typo of "QUEENSTOWN" that kept
+    # the "TOWN" tail intact, before fuzzy matching ever got a chance to
+    # find the real town. Fixed by requiring a word-boundary match for
+    # aliases. "QUEENSTOWN" must stay reachable, whichever way it resolves.
+    match = resolve("QUEjNSTOWN")
+    assert match.towns == ["QUEENSTOWN"]
+    assert match.method == "town_fuzzy"
+
+    # A typo close enough to be genuinely ambiguous between the two is
+    # fine (asking beats guessing) -- but QUEENSTOWN must still be offered,
+    # not silently dropped in favour of CENTRAL AREA.
+    with pytest.raises(LocalityNotFound) as exc_info:
+        resolve("QUieNSTOWN")
+    assert "QUEENSTOWN" in exc_info.value.suggestions
+
+    # Legitimate generic-alias usage must still work.
+    assert resolve("downtown").towns == ["CENTRAL AREA"]
+    assert resolve("the city").towns == ["CENTRAL AREA"]
