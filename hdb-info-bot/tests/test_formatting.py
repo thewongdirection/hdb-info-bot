@@ -86,6 +86,21 @@ def test_greeting_mentions_glossary_command():
     assert "/glossary" in formatting.greeting()
 
 
+def test_greeting_varies_across_calls():
+    # Probabilistic but safe: 5 openers, 50 calls, astronomically unlikely
+    # to collapse to a single value by chance if the variation is working.
+    greetings = {formatting.greeting() for _ in range(50)}
+    assert len(greetings) > 1
+
+
+def test_greeting_always_contains_core_content_regardless_of_opener():
+    for _ in range(20):
+        text = formatting.greeting()
+        assert "HDB property and carpark info bot" in text
+        assert "What would you like to do?" in text
+        assert "/glossary" in text
+
+
 def test_ask_which_carpark_message_is_nonempty():
     assert formatting.ask_which_carpark_message()
 

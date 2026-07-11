@@ -461,11 +461,13 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
-async def glossary_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Available at any point in the conversation without disrupting it —
-    registered as a fallback, and returns None so PTB leaves the current
-    per-chat state unchanged."""
+async def glossary_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Available at any point in the conversation — registered as a
+    fallback. Like every other branch, it ends back at the main menu rather
+    than leaving the user stuck wherever they were."""
     await update.effective_message.reply_text(format_full_glossary(), parse_mode=ParseMode.MARKDOWN)
+    await _send_main_menu(update.effective_message)
+    return CHOOSING_INTENT
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:

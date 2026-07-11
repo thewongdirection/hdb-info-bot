@@ -9,6 +9,8 @@ general market information only, not financial, legal, or property advice.
 """
 from __future__ import annotations
 
+import random
+
 from . import glossary
 from .stats import FlatTypeStats
 
@@ -34,9 +36,19 @@ _STATS_TERMS_NOTE = (
 )
 
 
+_GREETING_OPENERS = [
+    "Hello, and welcome! 👋",
+    "Hi there! 👋",
+    "Welcome! 👋",
+    "Hey, good to see you! 👋",
+    "Hello again! 👋",
+]
+
+
 def greeting() -> str:
+    opener = random.choice(_GREETING_OPENERS)
     return (
-        "Hello, and welcome! 👋 I'm the HDB property and carpark info bot. "
+        f"{opener} I'm the HDB property and carpark info bot. "
         "I can help you look at price trends for buying, selling, or "
         "renting a flat, check nearby carpark availability, or compare "
         "prices across a few districts. What would you like to do?\n\n"

@@ -525,15 +525,17 @@ async def test_error_handler_replies_with_friendly_message():
     update.effective_message.reply_text.assert_awaited_once()
 
 
-async def test_glossary_command_replies_with_glossary_text():
+async def test_glossary_command_replies_with_glossary_text_then_main_menu():
     update = MagicMock()
     update.effective_message.reply_text = AsyncMock()
     context = _make_context(_make_config())
 
     result = await conversation.glossary_command(update, context)
 
-    assert result is None  # leaves conversation state unchanged (PTB fallback semantics)
-    update.effective_message.reply_text.assert_awaited_once()
-    sent_text = update.effective_message.reply_text.await_args.args[0]
-    assert "MOP" in sent_text
-    assert "hdb.gov.sg" in sent_text
+    assert result == conversation.CHOOSING_INTENT
+    assert update.effective_message.reply_text.await_count == 2
+    glossary_text = update.effective_message.reply_text.await_args_list[0].args[0]
+    assert "MOP" in glossary_text
+    assert "hdb.gov.sg" in glossary_text
+    menu_text = update.effective_message.reply_text.await_args_list[1].args[0]
+    assert "What would you like to do?" in menu_text
