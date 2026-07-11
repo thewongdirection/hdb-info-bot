@@ -84,7 +84,7 @@ def _fmt_money(value: float) -> str:
     return f"${value:,.0f}"
 
 
-def _fmt_flat_type(flat_type: str) -> str:
+def fmt_flat_type(flat_type: str) -> str:
     # Resale dataset uses "3 ROOM", rental dataset uses "3-ROOM" — normalize
     # so both read the same way in a reply.
     return flat_type.replace("-", " ").title()
@@ -120,7 +120,7 @@ def format_stats_message(
         lines.append("")
 
     for s in stats:
-        lines.append(f"*{_fmt_flat_type(s.flat_type)}* — {s.count} transaction(s)")
+        lines.append(f"*{fmt_flat_type(s.flat_type)}* — {s.count} transaction(s)")
         lines.append(
             f"  Median: {_fmt_money(s.median)}{unit}  "
             f"(typical range {_fmt_money(s.p25)}–{_fmt_money(s.p75)}{unit})"
@@ -149,6 +149,19 @@ def map_caption(legend: list[tuple[str, str]]) -> str:
     for letter, town in legend:
         lines.append(f"  {letter} — {town.title()}")
     return "\n".join(lines)
+
+
+def trend_chart_caption(towns: list[str], intent: str, months_window: int) -> str:
+    town_list = ", ".join(t.title() for t in towns)
+    what = "rental price" if intent == "rent" else "resale price"
+    return (
+        f"📊 Average {what} by flat type, last {months_window} months — "
+        f"{town_list}.\n\n{glossary.SOURCES_FOOTER}"
+    )
+
+
+def no_trend_chart_data_message() -> str:
+    return "There isn't enough recent data to chart a price trend for that search, unfortunately."
 
 
 def no_maps_configured_message() -> str:

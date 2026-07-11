@@ -61,6 +61,27 @@ def test_compare_chart_caption_includes_sources_footer():
     assert SOURCES_FOOTER in caption
 
 
+def test_trend_chart_caption_includes_sources_footer_and_town():
+    caption = formatting.trend_chart_caption(["Bishan"], "buy", 12)
+    assert "Bishan" in caption
+    assert "resale price" in caption
+    assert SOURCES_FOOTER in caption
+
+
+def test_trend_chart_caption_rent_says_rental_price():
+    caption = formatting.trend_chart_caption(["Bishan"], "rent", 12)
+    assert "rental price" in caption
+
+
+def test_no_trend_chart_data_message_is_nonempty():
+    assert formatting.no_trend_chart_data_message()
+
+
+def test_fmt_flat_type_normalizes_hyphen_and_space():
+    assert formatting.fmt_flat_type("3 ROOM") == "3 Room"
+    assert formatting.fmt_flat_type("3-ROOM") == "3 Room"
+
+
 def test_greeting_mentions_glossary_command():
     assert "/glossary" in formatting.greeting()
 

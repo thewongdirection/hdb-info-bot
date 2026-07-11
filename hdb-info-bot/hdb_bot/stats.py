@@ -67,6 +67,19 @@ def filter_recent(
     return recent
 
 
+def group_by_flat_type(records: list[dict]) -> dict[str, list[dict]]:
+    """Split records into per-flat_type buckets, dropping any with no
+    flat_type. Used for the flat-type price trend chart (see charts.py) —
+    kept separate from monthly_average_series so callers can compute one
+    series per flat_type from the same underlying record set."""
+    grouped: dict[str, list[dict]] = {}
+    for r in records:
+        flat_type = r.get("flat_type")
+        if flat_type:
+            grouped.setdefault(flat_type, []).append(r)
+    return grouped
+
+
 def monthly_average_series(
     records: list[dict],
     price_field: str,

@@ -52,6 +52,7 @@ def _make_update_callback(data: str):
     update.callback_query.message.reply_text = AsyncMock()
     update.callback_query.message.reply_document = AsyncMock()
     update.callback_query.message.reply_venue = AsyncMock()
+    update.callback_query.message.reply_photo = AsyncMock()
     return update
 
 
@@ -352,6 +353,48 @@ async def test_show_block_map_geocoding_fails_gracefully(monkeypatch):
     assert state == conversation.CHOOSING_INTENT
     # progress message + failure message, no venues sent
     update.callback_query.message.reply_venue.assert_not_awaited()
+
+
+async def test_show_price_trend_chart_no_prior_query_reprompts():
+    update = _make_update_callback("show_trend_chart")
+    context = _make_context(_make_config())
+
+    state = await conversation.show_price_trend_chart(update, context)
+
+    assert state == conversation.CHOOSING_INTENT
+    update.callback_query.message.reply_photo.assert_not_awaited()
+
+
+async def test_show_price_trend_chart_no_data_reprompts(monkeypatch):
+    monkeypatch.setattr(conversation.local_store, "load_town_records", MagicMock(return_value=[]))
+    update = _make_update_callback("show_trend_chart")
+    context = _make_context(_make_config())
+    context.user_data["last_query"] = {"intent": "buy", "towns": ["BISHAN"]}
+
+    state = await conversation.show_price_trend_chart(update, context)
+
+    assert state == conversation.CHOOSING_INTENT
+    update.callback_query.message.reply_photo.assert_not_awaited()
+
+
+async def test_show_price_trend_chart_success_sends_chart_per_flat_type(monkeypatch):
+    this_month = date.today().strftime("%Y-%m")
+    records = [
+        {"month": this_month, "flat_type": "4 ROOM", "resale_price": 500000},
+        {"month": this_month, "flat_type": "3 ROOM", "resale_price": 400000},
+    ]
+    monkeypatch.setattr(conversation.local_store, "load_town_records", MagicMock(return_value=records))
+
+    update = _make_update_callback("show_trend_chart")
+    context = _make_context(_make_config(recent_months_window=12))
+    context.user_data["last_query"] = {"intent": "buy", "towns": ["BISHAN"]}
+
+    state = await conversation.show_price_trend_chart(update, context)
+
+    assert state == conversation.CHOOSING_INTENT
+    update.callback_query.message.reply_photo.assert_awaited_once()
+    photo_bytes = update.callback_query.message.reply_photo.await_args.kwargs["photo"]
+    assert photo_bytes.startswith(b"\x89PNG\r\n\x1a\n")
 
 
 _COMPARE_RECORDS = [

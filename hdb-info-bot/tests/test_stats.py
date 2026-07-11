@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from hdb_bot.stats import monthly_average_series, parse_month, summarize
+from hdb_bot.stats import group_by_flat_type, monthly_average_series, parse_month, summarize
 
 FIXTURES = Path(__file__).parent / "fixtures"
 TODAY = date(2026, 7, 15)
@@ -126,3 +126,25 @@ def test_monthly_average_series_skips_missing_price_or_month():
 
 def test_monthly_average_series_empty_input():
     assert monthly_average_series([], price_field="resale_price", month_field="month", today=TODAY) == []
+
+
+def test_group_by_flat_type_splits_correctly():
+    records = [
+        {"flat_type": "4 ROOM", "resale_price": 500000},
+        {"flat_type": "3 ROOM", "resale_price": 400000},
+        {"flat_type": "4 ROOM", "resale_price": 510000},
+    ]
+    grouped = group_by_flat_type(records)
+    assert set(grouped.keys()) == {"4 ROOM", "3 ROOM"}
+    assert len(grouped["4 ROOM"]) == 2
+    assert len(grouped["3 ROOM"]) == 1
+
+
+def test_group_by_flat_type_drops_records_missing_flat_type():
+    records = [{"flat_type": "4 ROOM", "resale_price": 500000}, {"resale_price": 999999}]
+    grouped = group_by_flat_type(records)
+    assert list(grouped.keys()) == ["4 ROOM"]
+
+
+def test_group_by_flat_type_empty_input():
+    assert group_by_flat_type([]) == {}

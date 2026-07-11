@@ -23,7 +23,7 @@ from .geocoding import GeocodeCache, geocode_many
 from .glossary import format_full_glossary
 from .localities import LocalityMatch, LocalityNotFound, resolve
 from .maps import fetch_map_image
-from .stats import filter_recent, monthly_average_series, summarize
+from .stats import filter_recent, group_by_flat_type, monthly_average_series, summarize
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +59,11 @@ _INTENT_KEYBOARD = InlineKeyboardMarkup(
     ]
 )
 
-_PLOT_BLOCKS_KEYBOARD = InlineKeyboardMarkup(
-    [[InlineKeyboardButton("📍 Plot blocks on map", callback_data="show_blocks")]]
+_RESULTS_FOLLOWUP_KEYBOARD = InlineKeyboardMarkup(
+    [
+        [InlineKeyboardButton("📍 Plot blocks on map", callback_data="show_blocks")],
+        [InlineKeyboardButton("📊 View price trend chart", callback_data="show_trend_chart")],
+    ]
 )
 
 
@@ -150,7 +153,7 @@ async def _handle_price_query(
 
     context.user_data["last_query"] = {"intent": intent, "towns": match.towns}
     await update.message.reply_text(
-        "Want to see the blocks behind these stats on a map?", reply_markup=_PLOT_BLOCKS_KEYBOARD
+        "Want to explore these results further?", reply_markup=_RESULTS_FOLLOWUP_KEYBOARD
     )
     await _send_main_menu(update.message)
     return CHOOSING_INTENT
@@ -344,6 +347,54 @@ async def show_block_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return CHOOSING_INTENT
 
 
+async def show_price_trend_chart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+
+    last_query = context.user_data.get("last_query")
+    if not last_query:
+        await query.message.reply_text(formatting.run_a_search_first_message())
+        await _send_main_menu(query.message)
+        return CHOOSING_INTENT
+
+    intent = last_query["intent"]
+    towns = last_query["towns"]
+    datasets = DATASETS_FOR_INTENT[intent]
+    config = context.bot_data["config"]
+
+    all_records: list[dict] = []
+    for town in towns:
+        town_records = await asyncio.to_thread(local_store.load_town_records, datasets, town)
+        all_records.extend(town_records)
+
+    series: dict[str, list[tuple[str, float]]] = {}
+    for flat_type, recs in group_by_flat_type(all_records).items():
+        points = monthly_average_series(
+            recs,
+            price_field=datasets[0].price_field,
+            month_field=datasets[0].month_field,
+            months_window=config.recent_months_window,
+        )
+        if points:
+            series[formatting.fmt_flat_type(flat_type)] = points
+
+    if not series:
+        await query.message.reply_text(formatting.no_trend_chart_data_message())
+        await _send_main_menu(query.message)
+        return CHOOSING_INTENT
+
+    price_unit_suffix = "per month" if intent == "rent" else ""
+    title = "Average Rental Price Trend by Flat Type" if intent == "rent" else "Average Resale Price Trend by Flat Type"
+    chart_bytes = build_price_comparison_chart(series, price_unit_suffix=price_unit_suffix, title=title)
+    await query.message.reply_photo(
+        photo=chart_bytes,
+        caption=formatting.trend_chart_caption(towns, intent, config.recent_months_window),
+    )
+
+    await _send_main_menu(query.message)
+    return CHOOSING_INTENT
+
+
 async def show_carpark_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -395,6 +446,7 @@ def build_conversation_handler() -> ConversationHandler:
             CHOOSING_INTENT: [
                 CallbackQueryHandler(intent_chosen, pattern=r"^intent:(buy|sell|rent|carparks|compare)$"),
                 CallbackQueryHandler(show_block_map, pattern=r"^show_blocks$"),
+                CallbackQueryHandler(show_price_trend_chart, pattern=r"^show_trend_chart$"),
                 CallbackQueryHandler(show_carpark_map, pattern=r"^carpark:.+$"),
                 CallbackQueryHandler(restart, pattern=r"^restart$"),
             ],
