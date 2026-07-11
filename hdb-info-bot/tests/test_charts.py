@@ -1,6 +1,6 @@
 import pytest
 
-from hdb_bot.charts import build_price_comparison_chart
+from hdb_bot.charts import build_price_comparison_chart, warm_up
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
@@ -34,3 +34,7 @@ def test_series_with_only_empty_point_lists_raises():
 def test_single_series_single_point():
     png = build_price_comparison_chart({"Bishan": [("2025-01", 500000.0)]})
     assert png.startswith(PNG_MAGIC)
+
+
+def test_warm_up_does_not_raise():
+    warm_up()

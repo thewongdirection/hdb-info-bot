@@ -68,3 +68,10 @@ def build_price_comparison_chart(
     fig.savefig(buffer, format="png")
     plt.close(fig)
     return buffer.getvalue()
+
+
+def warm_up() -> None:
+    """Render one throwaway tiny chart so any one-time matplotlib cost
+    (backend/font-cache initialization) happens now, during startup,
+    instead of during a user's first live chart request. See main.py."""
+    build_price_comparison_chart({"warm-up": [("2000-01", 0.0)]}, title="warm-up")

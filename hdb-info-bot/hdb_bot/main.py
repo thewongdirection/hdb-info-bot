@@ -21,6 +21,7 @@ import httpx
 from telegram.ext import Application, ContextTypes
 
 from . import carparks, local_store
+from .charts import warm_up as warm_up_charts
 from .config import Config, load_config
 from .conversation import build_conversation_handler, error_handler
 from .data_sync import DataSyncer
@@ -73,6 +74,9 @@ async def _post_init(application: Application) -> None:
     logger.info("Warming local SQLite cache (so the first user query isn't the one paying for it)...")
     await asyncio.to_thread(local_store.warm_cache, LOCAL_STORE_DATASETS, data_dir=syncer.data_dir)
     logger.info("Local SQLite cache warm.")
+
+    await asyncio.to_thread(warm_up_charts)
+    logger.info("Chart renderer warm.")
 
     interval = timedelta(hours=config.sync_interval_hours)
     application.job_queue.run_repeating(_sync_job, interval=interval, first=interval)

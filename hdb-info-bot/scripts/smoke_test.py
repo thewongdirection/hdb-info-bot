@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Manual pre/post-deploy sanity check — runs a REAL dataset sync against
-data.gov.sg (and hits Google Static Maps, if a key is configured), then reads
-back through the exact same local-cache code path the bot uses.
+data.gov.sg, then reads back through the exact same local-cache code path
+the bot uses.
 
 Run this once locally before deploying, and again after deploying, so you
 catch upstream schema drift or bad env vars before your users do. The first
@@ -29,7 +29,6 @@ from hdb_bot import carparks, local_store  # noqa: E402
 from hdb_bot.data_sync import DataSyncer  # noqa: E402
 from hdb_bot.datasets import DATASETS_FOR_INTENT  # noqa: E402
 from hdb_bot.localities import resolve  # noqa: E402
-from hdb_bot.maps import build_static_map_url, fetch_map_image  # noqa: E402
 from hdb_bot.stats import summarize  # noqa: E402
 
 
@@ -73,19 +72,6 @@ async def main(town_text: str, force_sync: bool) -> None:
     if matched_carparks:
         enriched = carparks.join_availability(matched_carparks, availability)
         print(f"   sample: {enriched[0]}")
-
-    api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
-    print("\n5. Google Static Maps check...")
-    if not api_key:
-        print("   GOOGLE_MAPS_API_KEY not set, skipping (bot will run text-only).")
-    else:
-        url, legend = build_static_map_url(match.towns, api_key)
-        print(f"   URL (key redacted): {url.split('&key=')[0]}&key=***")
-        result = await fetch_map_image(match.towns, api_key)
-        if result:
-            print(f"   -> fetched {len(result.image_bytes)} bytes, legend={result.legend}")
-        else:
-            print("   -> fetch_map_image returned None (check the key/quota)")
 
     print("\nAll good — smoke test complete.")
 

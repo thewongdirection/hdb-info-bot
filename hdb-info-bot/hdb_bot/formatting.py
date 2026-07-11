@@ -144,13 +144,6 @@ def format_stats_message(
     return "\n".join(lines).strip()
 
 
-def map_caption(legend: list[tuple[str, str]]) -> str:
-    lines = ["📍 Map legend:"]
-    for letter, town in legend:
-        lines.append(f"  {letter} — {town.title()}")
-    return "\n".join(lines)
-
-
 def trend_chart_caption(towns: list[str], intent: str, months_window: int) -> str:
     town_list = ", ".join(t.title() for t in towns)
     what = "rental price" if intent == "rent" else "resale price"

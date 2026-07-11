@@ -22,7 +22,6 @@ from .datasets import DATASETS_FOR_INTENT
 from .geocoding import GeocodeCache, geocode_many
 from .glossary import format_full_glossary
 from .localities import LocalityMatch, LocalityNotFound, resolve
-from .maps import fetch_map_image
 from .stats import filter_recent, group_by_flat_type, monthly_average_series, summarize
 
 logger = logging.getLogger(__name__)
@@ -84,6 +83,31 @@ async def _load_records_for_towns(datasets: list, towns: list[str]) -> list[dict
     for town_records in per_town:
         all_records.extend(town_records)
     return all_records
+
+
+def _build_trend_chart_bytes(
+    all_records: list[dict],
+    *,
+    price_field: str,
+    month_field: str,
+    months_window: int,
+    price_unit_suffix: str,
+    title: str,
+) -> bytes | None:
+    """Synchronous, CPU-bound: grouping/aggregating the records plus the
+    matplotlib render itself. Meant to be run via asyncio.to_thread — see
+    show_price_trend_chart. Returns None if there's no data to chart."""
+    series: dict[str, list[tuple[str, float]]] = {}
+    for flat_type, recs in group_by_flat_type(all_records).items():
+        points = monthly_average_series(
+            recs, price_field=price_field, month_field=month_field, months_window=months_window
+        )
+        if points:
+            series[formatting.fmt_flat_type(flat_type)] = points
+
+    if not series:
+        return None
+    return build_price_comparison_chart(series, price_unit_suffix=price_unit_suffix, title=title)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -154,14 +178,6 @@ async def _handle_price_query(
         intent, match.towns, stats, note=match.note, months_window=config.recent_months_window
     )
     await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
-
-    map_result = await fetch_map_image(
-        match.towns, config.google_maps_api_key, client=context.bot_data.get("http_client")
-    )
-    if map_result is not None:
-        await update.message.reply_photo(
-            photo=map_result.image_bytes, caption=formatting.map_caption(map_result.legend)
-        )
 
     context.user_data["last_query"] = {"intent": intent, "towns": match.towns}
     await update.message.reply_text(
@@ -252,7 +268,11 @@ async def _handle_compare_query(
 
     async def _points_for(label: str, match: LocalityMatch) -> tuple[str, list[tuple[str, float]]]:
         all_records = await _load_records_for_towns(datasets, match.towns)
-        points = monthly_average_series(
+        # monthly_average_series is real CPU work over potentially tens of
+        # thousands of records — run it in a thread so it doesn't block the
+        # event loop (and every other district's concurrent fetch/compute).
+        points = await asyncio.to_thread(
+            monthly_average_series,
             all_records,
             price_field=datasets[0].price_field,
             month_field=datasets[0].month_field,
@@ -278,7 +298,7 @@ async def _handle_compare_query(
     if dropped_count:
         await update.message.reply_text(formatting.compare_too_many_note(dropped_count, MAX_COMPARE_ENTRIES))
 
-    chart_bytes = build_price_comparison_chart(series)
+    chart_bytes = await asyncio.to_thread(build_price_comparison_chart, series)
     await update.message.reply_photo(
         photo=chart_bytes,
         caption=formatting.compare_chart_caption(list(series.keys()), config.chart_months_window),
@@ -380,25 +400,27 @@ async def show_price_trend_chart(update: Update, context: ContextTypes.DEFAULT_T
 
     all_records = await _load_records_for_towns(datasets, towns)
 
-    series: dict[str, list[tuple[str, float]]] = {}
-    for flat_type, recs in group_by_flat_type(all_records).items():
-        points = monthly_average_series(
-            recs,
-            price_field=datasets[0].price_field,
-            month_field=datasets[0].month_field,
-            months_window=config.recent_months_window,
-        )
-        if points:
-            series[formatting.fmt_flat_type(flat_type)] = points
+    price_unit_suffix = "per month" if intent == "rent" else ""
+    title = "Average Rental Price Trend by Flat Type" if intent == "rent" else "Average Resale Price Trend by Flat Type"
+    # Grouping/aggregating potentially hundreds of thousands of records and
+    # rendering the matplotlib figure are both real CPU work — run them in a
+    # thread so they don't block the event loop (and every other user's
+    # messages) for the whole duration.
+    chart_bytes = await asyncio.to_thread(
+        _build_trend_chart_bytes,
+        all_records,
+        price_field=datasets[0].price_field,
+        month_field=datasets[0].month_field,
+        months_window=config.recent_months_window,
+        price_unit_suffix=price_unit_suffix,
+        title=title,
+    )
 
-    if not series:
+    if chart_bytes is None:
         await query.message.reply_text(formatting.no_trend_chart_data_message())
         await _send_main_menu(query.message)
         return CHOOSING_INTENT
 
-    price_unit_suffix = "per month" if intent == "rent" else ""
-    title = "Average Rental Price Trend by Flat Type" if intent == "rent" else "Average Resale Price Trend by Flat Type"
-    chart_bytes = build_price_comparison_chart(series, price_unit_suffix=price_unit_suffix, title=title)
     await query.message.reply_photo(
         photo=chart_bytes,
         caption=formatting.trend_chart_caption(towns, intent, config.recent_months_window),

@@ -4,11 +4,10 @@ A Telegram bot with a friendly, professional tone that helps you **buy**,
 **sell**, or **rent** an HDB flat, find **carpark** availability nearby, or
 **compare** prices across districts. Tell it a town, postal code, or
 district number, and it pulls real transaction data from
-[data.gov.sg](https://data.gov.sg/datasets?topics=housing), summarizes
-recent price/rent stats by flat type, and drops a Google Map with pins for
-the areas you asked about — plus, on request, the individual HDB blocks
-behind those stats as interactive map pins you can pan, zoom, and open in
-your own maps app.
+[data.gov.sg](https://data.gov.sg/datasets?topics=housing) and summarizes
+recent price/rent stats by flat type — plus, on request, the individual HDB
+blocks behind those stats as interactive map pins you can pan, zoom, and
+open in your own maps app.
 
 ```
 You: /start
@@ -23,7 +22,7 @@ Bot: Here is the resale price summary for Bishan (last 12 months):
      4 Room — 27 transaction(s)
        Median: $520,000  (typical range $505,000–$535,000)
        ...
-     [map image with a pin + legend]
+     Want to explore these results further?
      [📍 Plot blocks on map]  [📊 View price trend chart]
 You: [📊 View price trend chart]
 Bot: [line chart: average price by flat type, last 12 months]
@@ -76,9 +75,6 @@ this one needs no Google Maps key at all, the chart is rendered locally.
   names — see [`hdb_bot/localities.py`](hdb_bot/localities.py).
 - **Stats**: median/mean/percentiles per flat type over the last 12 months,
   plus a year-on-year trend — see [`hdb_bot/stats.py`](hdb_bot/stats.py).
-- **Map**: Google Static Maps with one lettered pin per matched town + a text
-  legend (Google's marker labels only support a single character, so the
-  price itself can't be printed on the pin — see [`hdb_bot/maps.py`](hdb_bot/maps.py)).
 - **Block-level map (on request)**: the **📍 Plot blocks on map** button
   geocodes the top 10 most-transacted HDB blocks (address strings — the
   dataset has no coordinates) behind the last stats shown, using the Google
@@ -141,7 +137,7 @@ hdb_bot/
   conversation.py   ConversationHandler: /start -> intent -> locality -> results
   localities.py     postal code / district / town-name resolution
   stats.py          median/percentile/trend/monthly-average calculations
-  maps.py           Google Static Maps pin + legend builder (town-overview map)
+  maps.py           town-centroid coordinates (used by carparks.py's nearest-town lookup)
   geocoding.py      Google Geocoding API client + permanent disk cache, for the block map
   svy21.py          SVY21 <-> WGS84 coordinate conversion (carpark locations), no API needed
   carparks.py       carpark info (local cache) + live availability (real-time API), joined
@@ -194,29 +190,30 @@ guide — this is already implemented for you in
 [`hdb_bot/carparks.py`](hdb_bot/carparks.py); you only need to supply the
 key itself in `.env`.
 
-### 1c. Google Maps API key (Static Maps + Geocoding)
+### 1c. Google Maps API key (Geocoding)
 
-One key, two APIs enabled on it — Static Maps renders every map image;
-Geocoding is only used by the opt-in "📍 Plot blocks on map" button.
+Only used by the opt-in "📍 Plot blocks on map" button, to turn a block
+address into lat/lng coordinates for the venue pins it sends.
 
 1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and
    create a new project (e.g. "hdb-info-bot").
 2. Enable billing on the project (Cloud Console → Billing). This sounds
-   scary but Google gives **$200/month free credit**; Static Maps costs
-   ~$2/1,000 loads and Geocoding ~$5/1,000 requests, and geocoding results
-   are cached to disk forever (a given HDB block only ever gets geocoded
-   once) — a personal bot won't come close to the free credit.
-3. Go to **APIs & Services → Library**, search for and Enable **Maps Static
-   API**, then do the same for **Geocoding API**.
+   scary but Google gives **$200/month free credit**; Geocoding costs
+   ~$5/1,000 requests, and results are cached to disk forever (a given HDB
+   block only ever gets geocoded once) — a personal bot won't come close
+   to the free credit.
+3. Go to **APIs & Services → Library**, search for and Enable **Geocoding
+   API**.
 4. Go to **APIs & Services → Credentials → Create Credentials → API key**.
-5. Click **Restrict key**: under "API restrictions" limit it to those two
-   APIs. Under "Application restrictions" you can restrict by IP once you
-   know your server's outbound IP (Oracle VM has a fixed public IP; Cloud
-   Run's outbound IP isn't fixed unless you set up a static egress — for a
-   personal project, API-restriction alone is normally enough).
+5. Click **Restrict key**: under "API restrictions" limit it to the
+   Geocoding API. Under "Application restrictions" you can restrict by IP
+   once you know your server's outbound IP (Oracle VM has a fixed public
+   IP; Cloud Run's outbound IP isn't fixed unless you set up a static
+   egress — for a personal project, API-restriction alone is normally
+   enough).
 6. Copy the key into `GOOGLE_MAPS_API_KEY`. If you skip this whole section,
-   the bot still works — it just replies with text stats and no map images,
-   and the "Plot blocks on map" button tells the user maps aren't set up.
+   the bot still works — the "Plot blocks on map" button just tells the
+   user maps aren't set up.
 
 ---
 
@@ -237,7 +234,7 @@ python -m hdb_bot.main
 The first run downloads all 7 datasets (~90MB total, a minute or two) before
 the bot starts serving — that's expected, it's the initial sync described
 above. Message your bot on Telegram and walk through Buy → a town name →
-confirm you get stats back (and a map, if you configured `GOOGLE_MAPS_API_KEY`).
+confirm you get stats back.
 
 ## 3. Run the tests
 
@@ -360,14 +357,6 @@ free quota.
   points users to HDB, CEA, and MND for current specifics rather than
   risking a stale or case-specific figure being presented as universal.
   This bot is not a substitute for professional or official advice.
-- **The automatic map is town-centroid, not per-block.** The datasets only
-  carry a `town` field, not exact coordinates, so the pin sent right after
-  stats marks the general town area — matches the data's own granularity.
-  Use **📍 Plot blocks on map** for actual per-block pins (see below).
-- **Price can't be printed directly on a pin.** Google Static Maps marker
-  labels are a single character only; a future enhancement could render a
-  custom marker icon (e.g. via a text-to-image service) with the price baked
-  in, at the cost of an extra external dependency.
 - **Block-map geocoding is capped at `MAX_BLOCK_VENUES` (10, in
   `conversation.py`)**, picking the most-transacted blocks first, to keep
   the button's latency and the number of venue messages reasonable — a
