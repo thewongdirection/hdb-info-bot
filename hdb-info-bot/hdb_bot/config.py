@@ -49,6 +49,6 @@ def load_config() -> Config:
         port=int(os.environ.get("PORT", "8080")),
         recent_months_window=int(os.environ.get("RECENT_MONTHS_WINDOW", "12")),
         chart_months_window=int(os.environ.get("CHART_MONTHS_WINDOW", "24")),
-        sync_interval_hours=float(os.environ.get("SYNC_INTERVAL_HOURS", "24")),
+        sync_interval_hours=float(os.environ.get("SYNC_INTERVAL_HOURS", "4320")),
         data_dir=os.environ.get("DATA_DIR", "").strip() or None,
     )

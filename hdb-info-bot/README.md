@@ -63,8 +63,10 @@ this one needs no Google Maps key at all, the chart is rendered locally.
   when a user messages it. [`hdb_bot/data_sync.py`](hdb_bot/data_sync.py)
   downloads a full local CSV copy of every dataset above (using data.gov.sg's
   bulk download flow) once at startup and then on a repeating schedule
-  (`SYNC_INTERVAL_HOURS`, default 24h), checking each dataset's metadata
-  first so unchanged datasets are skipped. [`hdb_bot/local_store.py`](hdb_bot/local_store.py)
+  (`SYNC_INTERVAL_HOURS`, default 4320h / ~6 months — HDB's datasets are
+  republished monthly at most, so there's nothing to gain from checking more
+  often), checking each dataset's metadata first so unchanged datasets are
+  skipped. [`hdb_bot/local_store.py`](hdb_bot/local_store.py)
   ingests those local CSVs into a local SQLite database (indexed by town) and
   serves records to the conversation flow from there — so every user message
   is fast and never subject to data.gov.sg's rate limits, and the process
