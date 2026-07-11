@@ -44,6 +44,10 @@ def greeting() -> str:
     )
 
 
+def menu_prompt() -> str:
+    return "What would you like to do next?"
+
+
 def ask_locality(intent: str) -> str:
     verb = _INTENT_VERB.get(intent, "getting started")
     if intent == "compare":

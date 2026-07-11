@@ -59,16 +59,14 @@ _INTENT_KEYBOARD = InlineKeyboardMarkup(
     ]
 )
 
-_NEW_SEARCH_KEYBOARD = InlineKeyboardMarkup(
-    [[InlineKeyboardButton("🔁 New search", callback_data="restart")]]
+_PLOT_BLOCKS_KEYBOARD = InlineKeyboardMarkup(
+    [[InlineKeyboardButton("📍 Plot blocks on map", callback_data="show_blocks")]]
 )
 
-_RESULTS_KEYBOARD = InlineKeyboardMarkup(
-    [
-        [InlineKeyboardButton("📍 Plot blocks on map", callback_data="show_blocks")],
-        [InlineKeyboardButton("🔁 New search", callback_data="restart")],
-    ]
-)
+
+async def _send_main_menu(message) -> None:
+    """Every branch ends here — no dead ends, always back at the main menu."""
+    await message.reply_text(formatting.menu_prompt(), reply_markup=_INTENT_KEYBOARD)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -77,9 +75,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def restart(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Kept only so any "🔁 New search" button already sent in existing chat
+    history (from before every branch auto-returned to the main menu) still
+    works — no new message shows this button anymore."""
     query = update.callback_query
     await query.answer()
-    await query.message.reply_text(formatting.greeting(), reply_markup=_INTENT_KEYBOARD)
+    await _send_main_menu(query.message)
     return CHOOSING_INTENT
 
 
@@ -147,7 +148,10 @@ async def _handle_price_query(
         )
 
     context.user_data["last_query"] = {"intent": intent, "towns": match.towns}
-    await update.message.reply_text("Want to check another area?", reply_markup=_RESULTS_KEYBOARD)
+    await update.message.reply_text(
+        "Want to see the blocks behind these stats on a map?", reply_markup=_PLOT_BLOCKS_KEYBOARD
+    )
+    await _send_main_menu(update.message)
     return CHOOSING_INTENT
 
 
@@ -189,11 +193,11 @@ async def _handle_carparks_query(
         [InlineKeyboardButton(_carpark_button_label(c), callback_data=f"carpark:{c['car_park_no']}")]
         for c in pickable
     ]
-    keyboard_rows.append([InlineKeyboardButton("🔁 New search", callback_data="restart")])
 
     await update.message.reply_text(
         formatting.ask_which_carpark_message(), reply_markup=InlineKeyboardMarkup(keyboard_rows)
     )
+    await _send_main_menu(update.message)
     return CHOOSING_INTENT
 
 
@@ -259,9 +263,7 @@ async def _handle_compare_query(
         caption=formatting.compare_chart_caption(list(series.keys()), config.chart_months_window),
     )
 
-    await update.message.reply_text(
-        "Want to compare another set of areas?", reply_markup=_NEW_SEARCH_KEYBOARD
-    )
+    await _send_main_menu(update.message)
     return CHOOSING_INTENT
 
 
@@ -272,11 +274,13 @@ async def show_block_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     last_query = context.user_data.get("last_query")
     if not last_query:
         await query.message.reply_text(formatting.run_a_search_first_message())
+        await _send_main_menu(query.message)
         return CHOOSING_INTENT
 
     config = context.bot_data["config"]
     if not config.google_maps_api_key:
         await query.message.reply_text(formatting.no_maps_configured_message())
+        await _send_main_menu(query.message)
         return CHOOSING_INTENT
 
     intent = last_query["intent"]
@@ -303,6 +307,7 @@ async def show_block_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if not addresses:
         await query.message.reply_text(formatting.block_map_no_data_message())
+        await _send_main_menu(query.message)
         return CHOOSING_INTENT
 
     await query.message.reply_text(formatting.geocoding_in_progress_message(len(addresses)))
@@ -311,6 +316,7 @@ async def show_block_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     geocoded = await geocode_many(addresses, config.google_maps_api_key, cache)
     if not geocoded:
         await query.message.reply_text(formatting.block_map_failed_message())
+        await _send_main_menu(query.message)
         return CHOOSING_INTENT
 
     # Sent as native Telegram venues rather than a static image — each pin is
@@ -333,6 +339,7 @@ async def show_block_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await query.message.reply_text(
         formatting.block_venues_summary(towns, len(geocoded), len(addresses))
     )
+    await _send_main_menu(query.message)
     return CHOOSING_INTENT
 
 
@@ -344,6 +351,7 @@ async def show_carpark_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     carparks_by_no = context.user_data.get("last_carparks_by_no")
     if not carparks_by_no or car_park_no not in carparks_by_no:
         await query.message.reply_text(formatting.run_a_search_first_message())
+        await _send_main_menu(query.message)
         return CHOOSING_INTENT
 
     carpark = carparks_by_no[car_park_no]
@@ -356,6 +364,7 @@ async def show_carpark_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         title=carpark["address"].title(),
         address=f"Car park {car_park_no}",
     )
+    await _send_main_menu(query.message)
     return CHOOSING_INTENT
 
 

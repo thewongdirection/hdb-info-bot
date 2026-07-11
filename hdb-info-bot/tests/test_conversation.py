@@ -146,12 +146,17 @@ async def test_locality_received_carparks_success_presents_selection_keyboard(mo
 
     assert state == conversation.CHOOSING_INTENT
     conversation.carparks.get_carparks_for_towns.assert_called_once()
-    # No automatic map anymore — a text summary, then a keyboard to pick one carpark.
-    assert update.message.reply_text.await_count >= 2
-    keyboard = update.message.reply_text.await_args.kwargs["reply_markup"]
+    # No automatic map anymore — a text summary, a keyboard to pick one carpark,
+    # then (per the auto-return-to-menu behaviour) the main menu.
+    assert update.message.reply_text.await_count == 3
+    carpark_keyboard_call = update.message.reply_text.await_args_list[1]
+    keyboard = carpark_keyboard_call.kwargs["reply_markup"]
     button_texts = [b.text for row in keyboard.inline_keyboard for b in row]
     assert any("Test Address" in t for t in button_texts)
     assert context.user_data["last_carparks_by_no"]["ACB"]["lots_available"] == 10
+
+    menu_call = update.message.reply_text.await_args_list[2]
+    assert menu_call.kwargs["reply_markup"] == conversation._INTENT_KEYBOARD
 
 
 async def test_locality_received_carparks_no_carparks_reprompts(monkeypatch):
@@ -173,7 +178,8 @@ async def test_show_carpark_map_no_prior_selection_reprompts():
     state = await conversation.show_carpark_map(update, context)
 
     assert state == conversation.CHOOSING_INTENT
-    update.callback_query.message.reply_text.assert_awaited_once()
+    # "run a search first" message, then (per auto-return-to-menu) the main menu.
+    assert update.callback_query.message.reply_text.await_count == 2
     update.callback_query.message.reply_venue.assert_not_awaited()
 
 
@@ -204,9 +210,12 @@ async def test_show_carpark_map_success_sends_breakdown_and_venue():
     state = await conversation.show_carpark_map(update, context)
 
     assert state == conversation.CHOOSING_INTENT
-    update.callback_query.message.reply_text.assert_awaited_once()
-    breakdown_text = update.callback_query.message.reply_text.await_args.args[0]
+    # Lots breakdown, then (per auto-return-to-menu) the main menu.
+    assert update.callback_query.message.reply_text.await_count == 2
+    breakdown_text = update.callback_query.message.reply_text.await_args_list[0].args[0]
     assert "42/100" in breakdown_text
+    menu_call = update.callback_query.message.reply_text.await_args_list[1]
+    assert menu_call.kwargs["reply_markup"] == conversation._INTENT_KEYBOARD
 
     update.callback_query.message.reply_venue.assert_awaited_once()
     venue_kwargs = update.callback_query.message.reply_venue.await_args.kwargs
@@ -221,7 +230,8 @@ async def test_show_block_map_no_prior_query_reprompts():
     state = await conversation.show_block_map(update, context)
 
     assert state == conversation.CHOOSING_INTENT
-    update.callback_query.message.reply_text.assert_awaited_once()
+    # "run a search first" message, then (per auto-return-to-menu) the main menu.
+    assert update.callback_query.message.reply_text.await_count == 2
 
 
 async def test_show_block_map_no_api_key_configured():
@@ -232,7 +242,7 @@ async def test_show_block_map_no_api_key_configured():
     state = await conversation.show_block_map(update, context)
 
     assert state == conversation.CHOOSING_INTENT
-    update.callback_query.message.reply_text.assert_awaited_once()
+    assert update.callback_query.message.reply_text.await_count == 2
 
 
 async def test_show_block_map_success(monkeypatch):
