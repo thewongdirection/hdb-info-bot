@@ -31,12 +31,19 @@ logger = logging.getLogger(__name__)
 METADATA_BASE = "https://api-production.data.gov.sg/v2/public/api/datasets"
 DOWNLOAD_BASE = "https://api-open.data.gov.sg/v1/public/api/datasets"
 
-MAX_RETRIES = 3
-BASE_BACKOFF_SECONDS = 1.0
+MAX_RETRIES = 5
+BASE_BACKOFF_SECONDS = 2.0
 POLL_ATTEMPTS = 10
 POLL_INTERVAL_SECONDS = 2.0
 DEFAULT_TIMEOUT_SECONDS = 120.0
-SYNC_CONCURRENCY = 3
+# Sequential, not concurrent: data.gov.sg's initiate-download/poll-download
+# endpoints have a rate limit tight enough that even 2-3 concurrent dataset
+# syncs reliably trip 429s (observed in production — see git history for
+# this line). A single dataset's sync already overlaps network wait time
+# with nothing else useful to do, so there's no real latency cost to
+# serializing them, and it avoids silently ending up with missing/stale
+# datasets when the rate limit bites.
+SYNC_CONCURRENCY = 1
 
 
 def default_data_dir() -> Path:
@@ -184,12 +191,13 @@ class DataSyncer:
         return SyncResult(dataset.resource_id, dataset.label, changed=True, row_count=row_count)
 
     async def sync_all(self, *, force: bool = False) -> list[SyncResult]:
-        """Sync every registered dataset concurrently (bounded, and sharing
-        one connection pool) rather than one at a time — datasets are
-        completely independent downloads, so there's no reason to make a
-        user wait through 7 sequential round-trips at startup when a few
-        concurrent ones finish in a fraction of the time. Bounded so we're
-        not hammering data.gov.sg with every dataset at once."""
+        """Sync every registered dataset, sharing one connection pool.
+
+        SYNC_CONCURRENCY controls how many run at once — kept at 1 (fully
+        sequential) because data.gov.sg's initiate-download/poll-download
+        endpoints have a rate limit tight enough that even 2-3 concurrent
+        dataset syncs reliably trip 429s in practice, which risks ending up
+        with missing/stale local data rather than saving meaningful time."""
         semaphore = asyncio.Semaphore(SYNC_CONCURRENCY)
 
         async def _bounded(dataset: DatasetInfo, client: httpx.AsyncClient) -> SyncResult:
