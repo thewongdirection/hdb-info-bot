@@ -98,12 +98,19 @@ def build_static_map_url(
 
 
 async def fetch_map_image(
-    towns: list[str], api_key: str | None, *, timeout: float = 15.0
+    towns: list[str],
+    api_key: str | None,
+    *,
+    timeout: float = 15.0,
+    client: httpx.AsyncClient | None = None,
 ) -> MapResult | None:
     """Fetch the static map image server-side (key never reaches the user).
 
     Returns None if no API key is configured or none of the towns can be
-    plotted — callers should degrade to text-only stats in that case.
+    plotted — callers should degrade to text-only stats in that case. Pass
+    `client` to reuse an existing connection pool (main.py keeps one for the
+    app's lifetime, avoiding a fresh TCP+TLS handshake to Google on every
+    single map request) — a one-off client is opened if omitted.
     """
     if not api_key:
         return None
@@ -112,7 +119,12 @@ async def fetch_map_image(
     except ValueError:
         return None
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        resp = await client.get(url)
+    if client is not None:
+        resp = await client.get(url, timeout=timeout)
+        resp.raise_for_status()
+        return MapResult(image_bytes=resp.content, legend=legend)
+
+    async with httpx.AsyncClient(timeout=timeout) as new_client:
+        resp = await new_client.get(url)
         resp.raise_for_status()
         return MapResult(image_bytes=resp.content, legend=legend)

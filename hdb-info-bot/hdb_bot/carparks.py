@@ -95,7 +95,10 @@ def _parse_lot(entry: dict) -> dict:
 
 
 async def fetch_availability(
-    api_key: str | None = None, *, timeout: float = REQUEST_TIMEOUT
+    api_key: str | None = None,
+    *,
+    timeout: float = REQUEST_TIMEOUT,
+    client: httpx.AsyncClient | None = None,
 ) -> dict[str, dict]:
     """Live lots-available lookup, keyed by car_park_no.
 
@@ -106,13 +109,20 @@ async def fetch_availability(
 
     Never raises — returns {} on any failure so a flaky real-time API can't
     break the carpark listing; facility info still shows without live counts.
+    Pass `client` to reuse an existing connection pool instead of paying a
+    fresh TCP+TLS handshake for every carpark query.
     """
     headers = {"x-api-key": api_key} if api_key else {}
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.get(AVAILABILITY_URL, headers=headers)
+        if client is not None:
+            resp = await client.get(AVAILABILITY_URL, headers=headers, timeout=timeout)
             resp.raise_for_status()
             payload = resp.json()
+        else:
+            async with httpx.AsyncClient(timeout=timeout) as new_client:
+                resp = await new_client.get(AVAILABILITY_URL, headers=headers)
+                resp.raise_for_status()
+                payload = resp.json()
     except Exception as exc:
         logger.warning("Carpark availability API call failed: %s", exc)
         return {}

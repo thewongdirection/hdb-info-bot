@@ -36,6 +36,7 @@ BASE_BACKOFF_SECONDS = 1.0
 POLL_ATTEMPTS = 10
 POLL_INTERVAL_SECONDS = 2.0
 DEFAULT_TIMEOUT_SECONDS = 120.0
+SYNC_CONCURRENCY = 3
 
 
 def default_data_dir() -> Path:
@@ -123,41 +124,53 @@ class DataSyncer:
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
         raise DataSyncError(f"Timed out waiting for a download URL for {resource_id}")
 
-    async def sync_dataset(self, dataset: DatasetInfo, *, force: bool = False) -> SyncResult:
+    async def sync_dataset(
+        self, dataset: DatasetInfo, *, client: httpx.AsyncClient | None = None, force: bool = False
+    ) -> SyncResult:
+        """Sync one dataset. Pass `client` to reuse an existing connection
+        pool (see sync_all) — a fresh one is opened if omitted, so this stays
+        a complete, standalone call for direct use (e.g. in tests)."""
+        if client is not None:
+            return await self._sync_dataset(dataset, client, force=force)
+        async with httpx.AsyncClient(timeout=self.timeout) as new_client:
+            return await self._sync_dataset(dataset, new_client, force=force)
+
+    async def _sync_dataset(
+        self, dataset: DatasetInfo, client: httpx.AsyncClient, *, force: bool
+    ) -> SyncResult:
         entry = self._manifest.get(dataset.resource_id, {})
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            upstream_updated: str | None = None
-            try:
-                meta = await self._fetch_metadata(client, dataset.resource_id)
-                upstream_updated = meta.get("lastUpdatedAt")
-            except Exception as exc:
-                logger.warning(
-                    "Could not fetch metadata for %s, will re-download to be safe: %s",
-                    dataset.resource_id, exc,
-                )
-
-            already_fresh = (
-                not force
-                and self.csv_path(dataset.resource_id).exists()
-                and upstream_updated is not None
-                and entry.get("last_updated_at") == upstream_updated
+        upstream_updated: str | None = None
+        try:
+            meta = await self._fetch_metadata(client, dataset.resource_id)
+            upstream_updated = meta.get("lastUpdatedAt")
+        except Exception as exc:
+            logger.warning(
+                "Could not fetch metadata for %s, will re-download to be safe: %s",
+                dataset.resource_id, exc,
             )
-            if already_fresh:
-                return SyncResult(
-                    dataset.resource_id, dataset.label, changed=False, row_count=entry.get("row_count")
-                )
 
-            try:
-                csv_url = await self._get_download_url(client, dataset.resource_id)
-                resp = await client.get(csv_url, timeout=self.timeout)
-                resp.raise_for_status()
-            except Exception as exc:
-                return SyncResult(
-                    dataset.resource_id, dataset.label, changed=False,
-                    row_count=entry.get("row_count"), error=str(exc),
-                )
-            content = resp.content
+        already_fresh = (
+            not force
+            and self.csv_path(dataset.resource_id).exists()
+            and upstream_updated is not None
+            and entry.get("last_updated_at") == upstream_updated
+        )
+        if already_fresh:
+            return SyncResult(
+                dataset.resource_id, dataset.label, changed=False, row_count=entry.get("row_count")
+            )
+
+        try:
+            csv_url = await self._get_download_url(client, dataset.resource_id)
+            resp = await client.get(csv_url, timeout=self.timeout)
+            resp.raise_for_status()
+        except Exception as exc:
+            return SyncResult(
+                dataset.resource_id, dataset.label, changed=False,
+                row_count=entry.get("row_count"), error=str(exc),
+            )
+        content = resp.content
 
         self.csv_path(dataset.resource_id).write_bytes(content)
         row_count = max(content.count(b"\n") - 1, 0)
@@ -171,14 +184,26 @@ class DataSyncer:
         return SyncResult(dataset.resource_id, dataset.label, changed=True, row_count=row_count)
 
     async def sync_all(self, *, force: bool = False) -> list[SyncResult]:
-        results = []
-        for dataset in ALL_DATASETS:
-            result = await self.sync_dataset(dataset, force=force)
-            results.append(result)
+        """Sync every registered dataset concurrently (bounded, and sharing
+        one connection pool) rather than one at a time — datasets are
+        completely independent downloads, so there's no reason to make a
+        user wait through 7 sequential round-trips at startup when a few
+        concurrent ones finish in a fraction of the time. Bounded so we're
+        not hammering data.gov.sg with every dataset at once."""
+        semaphore = asyncio.Semaphore(SYNC_CONCURRENCY)
+
+        async def _bounded(dataset: DatasetInfo, client: httpx.AsyncClient) -> SyncResult:
+            async with semaphore:
+                return await self.sync_dataset(dataset, client=client, force=force)
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            results = await asyncio.gather(*(_bounded(d, client) for d in ALL_DATASETS))
+
+        for result in results:
             if result.error:
-                logger.error("Sync failed for %s: %s", dataset.label, result.error)
+                logger.error("Sync failed for %s: %s", result.label, result.error)
             elif result.changed:
-                logger.info("Synced %s: %s rows", dataset.label, result.row_count)
+                logger.info("Synced %s: %s rows", result.label, result.row_count)
             else:
-                logger.debug("%s already up to date", dataset.label)
-        return results
+                logger.debug("%s already up to date", result.label)
+        return list(results)

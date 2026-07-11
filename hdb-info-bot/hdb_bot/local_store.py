@@ -67,27 +67,38 @@ def _db_path(data_dir: Path) -> Path:
     return data_dir / _DB_FILENAME
 
 
+# Paths whose schema/WAL mode is already set up in this process — skips
+# re-running CREATE TABLE/INDEX (each a real sqlite_master lookup) on every
+# single load_town_records() call once it's been done once.
+_schema_ready: set[Path] = set()
+
+
 def _connect(data_dir: Path) -> sqlite3.Connection:
     data_dir.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(_db_path(data_dir))
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS records (
-            resource_id TEXT NOT NULL,
-            town TEXT NOT NULL,
-            flat_type TEXT,
-            block TEXT,
-            street_name TEXT,
-            price REAL,
-            period TEXT
+    db_path = _db_path(data_dir)
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA busy_timeout=5000")  # connection-scoped, must be set every time
+
+    if db_path not in _schema_ready:
+        conn.execute("PRAGMA journal_mode=WAL")  # persisted in the file; no need to repeat
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS records (
+                resource_id TEXT NOT NULL,
+                town TEXT NOT NULL,
+                flat_type TEXT,
+                block TEXT,
+                street_name TEXT,
+                price REAL,
+                period TEXT
+            )
+            """
         )
-        """
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_records_resource_town ON records(resource_id, town)"
-    )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_records_resource_town ON records(resource_id, town)"
+        )
+        _schema_ready.add(db_path)
+
     return conn
 
 

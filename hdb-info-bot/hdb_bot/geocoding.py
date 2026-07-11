@@ -85,12 +85,16 @@ async def geocode_many(
     cache: GeocodeCache,
     *,
     concurrency: int = DEFAULT_CONCURRENCY,
+    client: httpx.AsyncClient | None = None,
 ) -> dict[str, tuple[float, float]]:
     """Geocode a batch of addresses, using and updating the disk cache.
 
     Returns only the addresses that resolved to coordinates; unresolvable
     or failed addresses are simply omitted (never raises for individual
-    address failures — a bad block shouldn't take down the whole map).
+    address failures — a bad block shouldn't take down the whole map). Pass
+    `client` to reuse an existing connection pool across separate calls to
+    this function (different block-map requests) — one is opened just for
+    this batch if omitted.
     """
     results: dict[str, tuple[float, float]] = {}
     to_fetch: list[str] = []
@@ -105,10 +109,10 @@ async def geocode_many(
     if to_fetch:
         semaphore = asyncio.Semaphore(concurrency)
 
-        async def _fetch(address: str, client: httpx.AsyncClient) -> None:
+        async def _fetch(address: str, http_client: httpx.AsyncClient) -> None:
             async with semaphore:
                 try:
-                    coords = await _geocode_one(client, address, api_key)
+                    coords = await _geocode_one(http_client, address, api_key)
                 except Exception as exc:
                     logger.warning("Geocoding failed for %r: %s", address, exc)
                     return
@@ -116,8 +120,11 @@ async def geocode_many(
                 if coords is not None:
                     results[address] = coords
 
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        if client is not None:
             await asyncio.gather(*(_fetch(a, client) for a in to_fetch))
+        else:
+            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as new_client:
+                await asyncio.gather(*(_fetch(a, new_client) for a in to_fetch))
         cache.save()
 
     return results

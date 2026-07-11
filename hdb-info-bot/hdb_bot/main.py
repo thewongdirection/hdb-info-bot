@@ -17,6 +17,7 @@ import logging
 from datetime import timedelta
 from pathlib import Path
 
+import httpx
 from telegram.ext import Application, ContextTypes
 
 from . import carparks, local_store
@@ -44,9 +45,21 @@ async def _sync_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.info("Local SQLite cache re-warmed after sync")
 
 
+async def _post_shutdown(application: Application) -> None:
+    client: httpx.AsyncClient | None = application.bot_data.get("http_client")
+    if client is not None:
+        await client.aclose()
+
+
 async def _post_init(application: Application) -> None:
     config: Config = application.bot_data["config"]
     syncer: DataSyncer = application.bot_data["data_syncer"]
+
+    # Shared across every Google Maps / Geocoding / carpark-availability call
+    # for the app's whole lifetime, instead of each call opening its own
+    # client — reuses one TCP+TLS connection per host instead of paying for
+    # a fresh handshake on every single request.
+    application.bot_data["http_client"] = httpx.AsyncClient(timeout=15.0)
 
     logger.info("Running initial dataset sync (this can take a minute the first time)...")
     results = await syncer.sync_all()
@@ -69,7 +82,11 @@ def main() -> None:
     config = load_config()
 
     application = (
-        Application.builder().token(config.telegram_bot_token).post_init(_post_init).build()
+        Application.builder()
+        .token(config.telegram_bot_token)
+        .post_init(_post_init)
+        .post_shutdown(_post_shutdown)
+        .build()
     )
     application.bot_data["config"] = config
     application.bot_data["data_syncer"] = DataSyncer(

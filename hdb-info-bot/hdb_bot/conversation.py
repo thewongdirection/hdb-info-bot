@@ -73,6 +73,19 @@ async def _send_main_menu(message) -> None:
     await message.reply_text(formatting.greeting(), reply_markup=_INTENT_KEYBOARD)
 
 
+async def _load_records_for_towns(datasets: list, towns: list[str]) -> list[dict]:
+    """Fetch every town's records concurrently rather than one at a time —
+    each is an independent SQLite read, so there's no reason to serialize
+    them when a locality resolves to several towns (e.g. a district)."""
+    per_town = await asyncio.gather(
+        *(asyncio.to_thread(local_store.load_town_records, datasets, town) for town in towns)
+    )
+    all_records: list[dict] = []
+    for town_records in per_town:
+        all_records.extend(town_records)
+    return all_records
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.effective_message.reply_text(formatting.greeting(), reply_markup=_INTENT_KEYBOARD)
     return CHOOSING_INTENT
@@ -123,10 +136,7 @@ async def _handle_price_query(
 
     # Reads the local cache that data_sync.py keeps refreshed — no live
     # data.gov.sg call happens here, so this stays fast and off the rate limit.
-    all_records: list[dict] = []
-    for town in match.towns:
-        town_records = await asyncio.to_thread(local_store.load_town_records, datasets, town)
-        all_records.extend(town_records)
+    all_records = await _load_records_for_towns(datasets, match.towns)
 
     stats = summarize(
         all_records,
@@ -145,7 +155,9 @@ async def _handle_price_query(
     )
     await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
 
-    map_result = await fetch_map_image(match.towns, config.google_maps_api_key)
+    map_result = await fetch_map_image(
+        match.towns, config.google_maps_api_key, client=context.bot_data.get("http_client")
+    )
     if map_result is not None:
         await update.message.reply_photo(
             photo=map_result.image_bytes, caption=formatting.map_caption(map_result.legend)
@@ -180,7 +192,9 @@ async def _handle_carparks_query(
         await update.message.reply_text(formatting.ask_locality("carparks"))
         return ASKING_LOCALITY
 
-    availability = await carparks.fetch_availability(config.data_gov_sg_api_key)
+    availability = await carparks.fetch_availability(
+        config.data_gov_sg_api_key, client=context.bot_data.get("http_client")
+    )
     enriched = carparks.join_availability(matched, availability)
 
     message = formatting.format_carpark_message(match.towns, enriched, note=match.note)
@@ -235,20 +249,23 @@ async def _handle_compare_query(
     # buy/sell both read the resale dataset group — a comparison of "average
     # prices" is inherently about the resale market.
     datasets = DATASETS_FOR_INTENT["buy"]
-    series: dict[str, list[tuple[str, float]]] = {}
-    for label, match in resolved:
-        all_records: list[dict] = []
-        for town in match.towns:
-            town_records = await asyncio.to_thread(local_store.load_town_records, datasets, town)
-            all_records.extend(town_records)
+
+    async def _points_for(label: str, match: LocalityMatch) -> tuple[str, list[tuple[str, float]]]:
+        all_records = await _load_records_for_towns(datasets, match.towns)
         points = monthly_average_series(
             all_records,
             price_field=datasets[0].price_field,
             month_field=datasets[0].month_field,
             months_window=config.chart_months_window,
         )
-        if points:
-            series[label.title()] = points
+        return label, points
+
+    # Each district's records are independent of the others, so fetch all of
+    # them concurrently instead of working through the list one at a time.
+    per_district = await asyncio.gather(*(_points_for(label, match) for label, match in resolved))
+    series: dict[str, list[tuple[str, float]]] = {
+        label.title(): points for label, points in per_district if points
+    }
 
     if not series:
         labels = [label.title() for label, _ in resolved]
@@ -291,10 +308,7 @@ async def show_block_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     towns = last_query["towns"]
     datasets = DATASETS_FOR_INTENT[intent]
 
-    all_records: list[dict] = []
-    for town in towns:
-        town_records = await asyncio.to_thread(local_store.load_town_records, datasets, town)
-        all_records.extend(town_records)
+    all_records = await _load_records_for_towns(datasets, towns)
 
     recent = filter_recent(
         all_records, month_field=datasets[0].month_field, months_window=config.recent_months_window
@@ -317,7 +331,9 @@ async def show_block_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await query.message.reply_text(formatting.geocoding_in_progress_message(len(addresses)))
 
     cache = GeocodeCache()
-    geocoded = await geocode_many(addresses, config.google_maps_api_key, cache)
+    geocoded = await geocode_many(
+        addresses, config.google_maps_api_key, cache, client=context.bot_data.get("http_client")
+    )
     if not geocoded:
         await query.message.reply_text(formatting.block_map_failed_message())
         await _send_main_menu(query.message)
@@ -362,10 +378,7 @@ async def show_price_trend_chart(update: Update, context: ContextTypes.DEFAULT_T
     datasets = DATASETS_FOR_INTENT[intent]
     config = context.bot_data["config"]
 
-    all_records: list[dict] = []
-    for town in towns:
-        town_records = await asyncio.to_thread(local_store.load_town_records, datasets, town)
-        all_records.extend(town_records)
+    all_records = await _load_records_for_towns(datasets, towns)
 
     series: dict[str, list[tuple[str, float]]] = {}
     for flat_type, recs in group_by_flat_type(all_records).items():
