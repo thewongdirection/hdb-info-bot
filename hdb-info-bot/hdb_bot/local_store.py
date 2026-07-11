@@ -1,28 +1,40 @@
-"""Serves town-filtered records from the locally-cached dataset CSVs.
+"""Serves town-filtered records from a local SQLite cache of the dataset CSVs.
 
 The conversation flow calls `load_town_records()` — it never queries
 data.gov.sg directly; only `data_sync.py` does that (see main.py's periodic
-sync job). Each dataset CSV is parsed once and indexed by town in memory;
-`invalidate_cache()` is called after a sync changes any file so the next
-read picks up fresh data.
+sync job). This module owns turning each synced CSV into a queryable local
+store: rows are ingested into a SQLite table (stdlib `sqlite3`, no new
+dependency) indexed by `(resource_id, town)`, rather than being parsed into
+one big Python dict-of-lists that stays resident in memory for the whole
+process lifetime.
 
-Each raw CSV row carries several columns (storey_range, floor_area_sqm,
-flat_model, lease_commence_date, remaining_lease, ...) that nothing in this
-codebase ever reads — stats.py, formatting.py, and conversation.py only ever
-touch `town`, `flat_type`, `block`, `street_name`, and the dataset's own
-price/month field names. With ~1.2M rows held in memory for the lifetime of
-the process, keeping the unused columns around is pure waste, so only the
-fields actually consumed are kept. `flat_type`/`town`/the month value are
-also low-cardinality across the whole dataset (a couple dozen towns, ~7 flat
-types, a few hundred distinct months), so they're interned to collapse
-what would otherwise be ~1.2M duplicate string objects down to a few
-hundred shared ones.
+That distinction matters at this data's scale (~1.2M rows across all
+datasets combined). A Python dict per row has real object overhead per
+row, and holding *every* row for *every* town forever means peak memory
+only ever grows. With SQLite, ingestion happens in bounded batches (so
+peak memory during a (re-)ingest is capped at one batch, not the whole
+dataset), the bulk of the data lives in the SQLite file — backed by the
+OS page cache rather than Python object graphs — and each `load_town_records`
+call only ever materializes the rows for the one town actually asked for,
+which get garbage collected once that request finishes.
+
+Only `flat_type`, `block`, `street_name`, and the dataset's own price/month
+fields are ever read by the rest of the codebase (stats.py, formatting.py,
+conversation.py), so those are the only columns stored — everything else in
+the raw CSV (storey_range, floor_area_sqm, flat_model, lease_commence_date,
+remaining_lease, ...) is dropped at ingest time.
+
+`invalidate_cache()` marks a dataset (or all of them) for re-ingestion on
+the next `load_town_records()` call — mirroring the old dict-cache's
+contract exactly: mutating a CSV on disk has no effect until
+`invalidate_cache()` is called (done by main.py's sync job after a dataset
+actually changes), at which point the *next* read re-ingests from disk.
 """
 from __future__ import annotations
 
 import csv
 import logging
-import sys
+import sqlite3
 from pathlib import Path
 
 from .data_sync import default_data_dir
@@ -30,66 +42,113 @@ from .datasets import DatasetInfo
 
 logger = logging.getLogger(__name__)
 
-_index_cache: dict[str, dict[str, list[dict]]] = {}
+_DB_FILENAME = "records.sqlite3"
+_INGEST_BATCH_SIZE = 5000
 
-_KEPT_TEXT_FIELDS = ("block", "street_name")
+# Which resource_ids currently have up-to-date rows in the SQLite table.
+# Cleared (in full or per-resource_id) by invalidate_cache(); repopulated
+# lazily the next time load_town_records() needs that dataset.
+_ingested: set[str] = set()
 
 
 def invalidate_cache(resource_id: str | None = None) -> None:
-    """Drop cached town-indexes so the next read re-parses from disk.
+    """Mark cached dataset(s) as stale so the next read re-ingests from disk.
 
     Pass a specific resource_id to invalidate just that dataset, or omit it
-    to clear everything (used after a sync run that changed any file).
+    to mark everything stale (used after a sync run that changed any file).
     """
     if resource_id is None:
-        _index_cache.clear()
+        _ingested.clear()
     else:
-        _index_cache.pop(resource_id, None)
+        _ingested.discard(resource_id)
 
 
-def _load_index(dataset: DatasetInfo, data_dir: Path) -> dict[str, list[dict]]:
-    cached = _index_cache.get(dataset.resource_id)
-    if cached is not None:
-        return cached
+def _db_path(data_dir: Path) -> Path:
+    return data_dir / _DB_FILENAME
 
+
+def _connect(data_dir: Path) -> sqlite3.Connection:
+    data_dir.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(_db_path(data_dir))
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS records (
+            resource_id TEXT NOT NULL,
+            town TEXT NOT NULL,
+            flat_type TEXT,
+            block TEXT,
+            street_name TEXT,
+            price REAL,
+            period TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_records_resource_town ON records(resource_id, town)"
+    )
+    return conn
+
+
+def _ingest(dataset: DatasetInfo, data_dir: Path, conn: sqlite3.Connection) -> None:
+    """(Re-)load `dataset`'s CSV into the records table, replacing any rows
+    already stored for its resource_id. No-op (but still marks the dataset
+    as ingested) if the CSV hasn't been synced down yet."""
     path = data_dir / f"{dataset.resource_id}.csv"
-    index: dict[str, list[dict]] = {}
+    conn.execute("DELETE FROM records WHERE resource_id = ?", (dataset.resource_id,))
+
     if not path.exists():
         logger.warning(
             "No local cache file for %s yet (%s) — has the initial sync run?",
             dataset.label, path,
         )
-        _index_cache[dataset.resource_id] = index
-        return index
+        conn.commit()
+        _ingested.add(dataset.resource_id)
+        return
 
     price_field = dataset.price_field
     month_field = dataset.month_field
+    insert_sql = (
+        "INSERT INTO records (resource_id, town, flat_type, block, street_name, price, period) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)"
+    )
 
+    batch: list[tuple] = []
     with path.open(newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             town = (row.get("town") or "").strip().upper()
             if not town:
                 continue
 
-            trimmed: dict = {
-                "town": town,
-                "flat_type": sys.intern((row.get("flat_type") or "").strip()),
-            }
-            for field in _KEPT_TEXT_FIELDS:
-                trimmed[field] = (row.get(field) or "").strip()
-            if month_field:
-                trimmed[month_field] = sys.intern((row.get(month_field) or "").strip())
+            price = None
             if price_field:
                 raw_price = row.get(price_field)
-                try:
-                    trimmed[price_field] = float(raw_price) if raw_price else None
-                except ValueError:
-                    trimmed[price_field] = None
+                if raw_price:
+                    try:
+                        price = float(raw_price)
+                    except ValueError:
+                        price = None
+            period = (row.get(month_field) or "").strip() if month_field else None
 
-            index.setdefault(town, []).append(trimmed)
+            batch.append((
+                dataset.resource_id,
+                town,
+                (row.get("flat_type") or "").strip(),
+                (row.get("block") or "").strip(),
+                (row.get("street_name") or "").strip(),
+                price,
+                period,
+            ))
+            if len(batch) >= _INGEST_BATCH_SIZE:
+                conn.executemany(insert_sql, batch)
+                batch.clear()
 
-    _index_cache[dataset.resource_id] = index
-    return index
+    if batch:
+        conn.executemany(insert_sql, batch)
+
+    conn.commit()
+    _ingested.add(dataset.resource_id)
 
 
 def load_town_records(
@@ -98,8 +157,31 @@ def load_town_records(
     """Return every record for `town` across all the given datasets."""
     data_dir = data_dir or default_data_dir()
     town_key = town.strip().upper()
-    records: list[dict] = []
-    for dataset in datasets:
-        index = _load_index(dataset, data_dir)
-        records.extend(index.get(town_key, []))
-    return records
+
+    conn = _connect(data_dir)
+    try:
+        records: list[dict] = []
+        for dataset in datasets:
+            if dataset.resource_id not in _ingested:
+                _ingest(dataset, data_dir, conn)
+
+            cur = conn.execute(
+                "SELECT town, flat_type, block, street_name, price, period "
+                "FROM records WHERE resource_id = ? AND town = ?",
+                (dataset.resource_id, town_key),
+            )
+            for town_val, flat_type, block, street_name, price, period in cur.fetchall():
+                record: dict = {
+                    "town": town_val,
+                    "flat_type": flat_type,
+                    "block": block,
+                    "street_name": street_name,
+                }
+                if dataset.price_field:
+                    record[dataset.price_field] = price
+                if dataset.month_field:
+                    record[dataset.month_field] = period
+                records.append(record)
+        return records
+    finally:
+        conn.close()

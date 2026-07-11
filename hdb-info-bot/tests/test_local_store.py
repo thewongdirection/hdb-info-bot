@@ -73,5 +73,5 @@ def test_invalidate_cache_for_single_resource_id(tmp_path):
 
     local_store.invalidate_cache(DATASET_A.resource_id)
 
-    assert DATASET_A.resource_id not in local_store._index_cache
-    assert DATASET_B.resource_id in local_store._index_cache
+    assert DATASET_A.resource_id not in local_store._ingested
+    assert DATASET_B.resource_id in local_store._ingested

@@ -65,9 +65,10 @@ this one needs no Google Maps key at all, the chart is rendered locally.
   bulk download flow) once at startup and then on a repeating schedule
   (`SYNC_INTERVAL_HOURS`, default 24h), checking each dataset's metadata
   first so unchanged datasets are skipped. [`hdb_bot/local_store.py`](hdb_bot/local_store.py)
-  indexes those local CSVs by town in memory and serves records to the
-  conversation flow — so every user message is fast and never subject to
-  data.gov.sg's rate limits.
+  ingests those local CSVs into a local SQLite database (indexed by town) and
+  serves records to the conversation flow from there — so every user message
+  is fast and never subject to data.gov.sg's rate limits, and the process
+  doesn't need to hold the full ~1.2M-row dataset in memory at once.
 - **Locality resolution**: free text ("Bishan", "near AMK"), 6-digit postal
   codes, or district numbers ("D19") are all mapped down to HDB's 26 town
   names — see [`hdb_bot/localities.py`](hdb_bot/localities.py).
@@ -134,7 +135,7 @@ this one needs no Google Maps key at all, the chart is rendered locally.
 hdb_bot/
   datasets.py       registry of every data.gov.sg dataset the bot uses
   data_sync.py      downloads/refreshes local CSV copies (metadata-aware, skips unchanged)
-  local_store.py    reads the local CSVs, indexed by town, for the conversation flow
+  local_store.py    ingests local CSVs into SQLite, serves records by town for the conversation flow
   conversation.py   ConversationHandler: /start -> intent -> locality -> results
   localities.py     postal code / district / town-name resolution
   stats.py          median/percentile/trend/monthly-average calculations
