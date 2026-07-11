@@ -77,6 +77,11 @@ CARPARK_INFO_DATASET = DatasetInfo(
 
 ALL_DATASETS: list[DatasetInfo] = RESALE_DATASETS + RENTAL_DATASETS + [CARPARK_INFO_DATASET]
 
+# Every dataset local_store.py serves (as opposed to carparks.py, which reads
+# CARPARK_INFO_DATASET directly) — main.py uses this to eagerly warm the
+# local SQLite cache at startup, before the bot accepts any traffic.
+LOCAL_STORE_DATASETS: list[DatasetInfo] = RESALE_DATASETS + RENTAL_DATASETS
+
 # buy/sell both look at the resale market from opposite sides of the same trade.
 DATASETS_FOR_INTENT: dict[str, list[DatasetInfo]] = {
     "buy": RESALE_DATASETS,

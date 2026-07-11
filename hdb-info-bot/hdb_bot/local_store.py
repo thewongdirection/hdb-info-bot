@@ -151,6 +151,26 @@ def _ingest(dataset: DatasetInfo, data_dir: Path, conn: sqlite3.Connection) -> N
     _ingested.add(dataset.resource_id)
 
 
+def warm_cache(datasets: list[DatasetInfo], *, data_dir: Path | None = None) -> None:
+    """Eagerly ingest every given dataset into SQLite right now.
+
+    Ingestion normally happens lazily, the first time load_town_records()
+    needs a dataset that isn't ingested yet — fine in general, but it means
+    whichever user's query happens to be first pays a real one-time cost
+    (a few seconds per dataset group). main.py calls this once at startup
+    (and again after any sync that changes a file) so that cost lands during
+    the already-expected startup/resync window instead of a live request.
+    """
+    data_dir = data_dir or default_data_dir()
+    conn = _connect(data_dir)
+    try:
+        for dataset in datasets:
+            if dataset.resource_id not in _ingested:
+                _ingest(dataset, data_dir, conn)
+    finally:
+        conn.close()
+
+
 def load_town_records(
     datasets: list[DatasetInfo], town: str, *, data_dir: Path | None = None
 ) -> list[dict]:

@@ -6,10 +6,13 @@ any host that gives you a public HTTPS URL and a $PORT to listen on.
 
 Either way, a full dataset sync runs once (blocking) before the bot starts
 serving, and then repeats in the background on `SYNC_INTERVAL_HOURS` — see
-data_sync.py and local_store.py.
+data_sync.py and local_store.py. The local SQLite cache is also eagerly
+warmed right after each sync (startup and periodic alike) so a user's first
+query is never the one paying the ingest cost.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import timedelta
 from pathlib import Path
@@ -20,6 +23,7 @@ from . import carparks, local_store
 from .config import Config, load_config
 from .conversation import build_conversation_handler, error_handler
 from .data_sync import DataSyncer
+from .datasets import LOCAL_STORE_DATASETS
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO
@@ -34,6 +38,10 @@ async def _sync_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         local_store.invalidate_cache()
         carparks.invalidate_cache()
         logger.info("Local dataset cache refreshed after sync")
+        await asyncio.to_thread(
+            local_store.warm_cache, LOCAL_STORE_DATASETS, data_dir=syncer.data_dir
+        )
+        logger.info("Local SQLite cache re-warmed after sync")
 
 
 async def _post_init(application: Application) -> None:
@@ -48,6 +56,10 @@ async def _post_init(application: Application) -> None:
         if r.error:
             logger.warning("Initial sync issue for %s: %s", r.label, r.error)
     logger.info("Initial dataset sync complete.")
+
+    logger.info("Warming local SQLite cache (so the first user query isn't the one paying for it)...")
+    await asyncio.to_thread(local_store.warm_cache, LOCAL_STORE_DATASETS, data_dir=syncer.data_dir)
+    logger.info("Local SQLite cache warm.")
 
     interval = timedelta(hours=config.sync_interval_hours)
     application.job_queue.run_repeating(_sync_job, interval=interval, first=interval)

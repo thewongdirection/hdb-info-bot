@@ -75,3 +75,27 @@ def test_invalidate_cache_for_single_resource_id(tmp_path):
 
     assert DATASET_A.resource_id not in local_store._ingested
     assert DATASET_B.resource_id in local_store._ingested
+
+
+def test_warm_cache_ingests_without_a_town_query(tmp_path):
+    _write_csv(tmp_path / "d_a.csv", ["2026-01,BISHAN,4 ROOM,500000"])
+
+    local_store.warm_cache([DATASET_A], data_dir=tmp_path)
+
+    assert DATASET_A.resource_id in local_store._ingested
+    # Ingestion already happened, so this read hits the warmed table directly.
+    records = local_store.load_town_records([DATASET_A], "BISHAN", data_dir=tmp_path)
+    assert len(records) == 1
+
+
+def test_warm_cache_skips_already_ingested_datasets(tmp_path):
+    csv_path = tmp_path / "d_a.csv"
+    _write_csv(csv_path, ["2026-01,BISHAN,4 ROOM,500000"])
+    local_store.load_town_records([DATASET_A], "BISHAN", data_dir=tmp_path)
+
+    # Mutate the file without invalidating -> warm_cache should not re-ingest it.
+    _write_csv(csv_path, ["2026-01,BISHAN,4 ROOM,500000", "2026-02,BISHAN,4 ROOM,510000"])
+    local_store.warm_cache([DATASET_A], data_dir=tmp_path)
+
+    records = local_store.load_town_records([DATASET_A], "BISHAN", data_dir=tmp_path)
+    assert len(records) == 1
