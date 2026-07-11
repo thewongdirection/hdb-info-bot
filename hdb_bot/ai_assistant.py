@@ -23,7 +23,7 @@ from anthropic import AsyncAnthropic
 from . import carparks, local_store
 from .datasets import DATASETS_FOR_INTENT
 from .localities import LocalityNotFound, resolve
-from .stats import group_by_flat_type, monthly_average_series, summarize
+from .stats import earliest_period, group_by_flat_type, monthly_average_series, summarize
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +131,40 @@ TOOLS: list[dict] = [
                 "locality": {"type": "string"},
             },
             "required": ["locality"],
+        },
+    },
+    {
+        "name": "rank_towns",
+        "description": (
+            "Get resale/rental price stats for EVERY one of Singapore's 26 HDB "
+            "towns at once — use this for 'which town is cheapest/most "
+            "expensive', 'rank all districts by price', or any question that "
+            "needs a citywide view. Unlike compare_localities, which is "
+            "limited to a handful of user-picked areas, this covers all of "
+            "them in a single call."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "intent": {
+                    "type": "string",
+                    "enum": ["buy", "sell", "rent"],
+                    "description": "'buy' and 'sell' both look at resale price data; 'rent' looks at rental data.",
+                },
+                "flat_type": {
+                    "type": "string",
+                    "description": (
+                        "Optional exact flat type to filter to, e.g. '3 ROOM', "
+                        "'4 ROOM', 'EXECUTIVE'. Omit to get every flat type for "
+                        "every town (a bigger result, but no data left out)."
+                    ),
+                },
+                "months_window": {
+                    "type": "integer",
+                    "description": "How many recent months to include. Default 12.",
+                },
+            },
+            "required": ["intent"],
         },
     },
 ]
@@ -252,6 +286,31 @@ async def _tool_get_carpark_availability(
     }
 
 
+async def _tool_rank_towns(intent: str, flat_type: str | None = None, months_window: int = 12) -> dict:
+    if intent not in DATASETS_FOR_INTENT:
+        return {"error": f"intent must be one of {sorted(DATASETS_FOR_INTENT)}, got {intent!r}"}
+
+    datasets = DATASETS_FOR_INTENT[intent]
+    cutoff = earliest_period(months_window)
+    normalized_flat_type = flat_type.strip().upper() if flat_type else None
+    rows = await asyncio.to_thread(
+        local_store.town_price_summary,
+        datasets,
+        cutoff_period=cutoff,
+        flat_type=normalized_flat_type,
+    )
+    if not rows:
+        return {
+            "months_window": months_window,
+            "flat_type": normalized_flat_type,
+            "towns": [],
+            "note": "no recent transactions found for that flat type" if normalized_flat_type else "no recent transactions found",
+        }
+
+    rows.sort(key=lambda r: r["median"])
+    return {"months_window": months_window, "flat_type": normalized_flat_type, "towns": rows}
+
+
 async def _execute_tool(name: str, tool_input: dict, *, data_gov_sg_api_key: str | None, http_client) -> dict:
     try:
         if name == "get_price_stats":
@@ -260,6 +319,8 @@ async def _execute_tool(name: str, tool_input: dict, *, data_gov_sg_api_key: str
             return await _tool_get_price_trend(**tool_input)
         if name == "compare_localities":
             return await _tool_compare_localities(**tool_input)
+        if name == "rank_towns":
+            return await _tool_rank_towns(**tool_input)
         if name == "get_carpark_availability":
             return await _tool_get_carpark_availability(
                 **tool_input, data_gov_sg_api_key=data_gov_sg_api_key, http_client=http_client

@@ -36,6 +36,7 @@ import asyncio
 import csv
 import logging
 import sqlite3
+import statistics
 from pathlib import Path
 
 from .data_sync import default_data_dir
@@ -215,6 +216,59 @@ def load_town_records(
                     record[dataset.month_field] = period
                 records.append(record)
         return records
+    finally:
+        conn.close()
+
+
+def town_price_summary(
+    datasets: list[DatasetInfo],
+    *,
+    cutoff_period: str,
+    flat_type: str | None = None,
+    data_dir: Path | None = None,
+) -> list[dict]:
+    """Per-(town, flat_type) count/mean/median across every HDB town at
+    once, for rows at or after `cutoff_period` (a "YYYY-MM" string — see
+    stats.earliest_period()) and optionally restricted to one flat_type.
+
+    Built for citywide "which town is cheapest/dearest" queries (see
+    ai_assistant.py's rank_towns tool). load_town_records() only ever reads
+    one town's full history, which is fine at that scale, but "every town"
+    is close to the whole dataset — so this filters to the recent window
+    and narrows to just (town, flat_type, price) in SQL first, and
+    aggregates from bare floats in Python, never materializing a record
+    dict per row the way load_town_records() does.
+    """
+    data_dir = data_dir or default_data_dir()
+    conn = _connect(data_dir)
+    try:
+        by_key: dict[tuple[str, str], list[float]] = {}
+        for dataset in datasets:
+            if dataset.resource_id not in _ingested:
+                _ingest(dataset, data_dir, conn)
+
+            sql = (
+                "SELECT town, flat_type, price FROM records "
+                "WHERE resource_id = ? AND period >= ? AND price IS NOT NULL"
+            )
+            params: list = [dataset.resource_id, cutoff_period]
+            if flat_type:
+                sql += " AND flat_type = ?"
+                params.append(flat_type)
+
+            for town, ftype, price in conn.execute(sql, params).fetchall():
+                by_key.setdefault((town, ftype), []).append(price)
+
+        return [
+            {
+                "town": town,
+                "flat_type": ftype,
+                "count": len(prices),
+                "mean": statistics.mean(prices),
+                "median": statistics.median(prices),
+            }
+            for (town, ftype), prices in by_key.items()
+        ]
     finally:
         conn.close()
 

@@ -88,6 +88,62 @@ def test_warm_cache_ingests_without_a_town_query(tmp_path):
     assert len(records) == 1
 
 
+def test_town_price_summary_groups_by_town_and_flat_type(tmp_path):
+    _write_csv(
+        tmp_path / "d_a.csv",
+        [
+            "2026-01,BISHAN,4 ROOM,500000",
+            "2026-02,BISHAN,4 ROOM,520000",
+            "2026-01,YISHUN,3 ROOM,300000",
+        ],
+    )
+    rows = local_store.town_price_summary([DATASET_A], cutoff_period="2025-01", data_dir=tmp_path)
+    by_key = {(r["town"], r["flat_type"]): r for r in rows}
+
+    assert by_key[("BISHAN", "4 ROOM")]["count"] == 2
+    assert by_key[("BISHAN", "4 ROOM")]["median"] == 510000
+    assert by_key[("YISHUN", "3 ROOM")]["count"] == 1
+
+
+def test_town_price_summary_respects_cutoff_period(tmp_path):
+    _write_csv(
+        tmp_path / "d_a.csv",
+        ["2024-01,BISHAN,4 ROOM,400000", "2026-01,BISHAN,4 ROOM,500000"],
+    )
+    rows = local_store.town_price_summary([DATASET_A], cutoff_period="2025-01", data_dir=tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["count"] == 1
+    assert rows[0]["mean"] == 500000
+
+
+def test_town_price_summary_filters_by_flat_type(tmp_path):
+    _write_csv(
+        tmp_path / "d_a.csv",
+        ["2026-01,BISHAN,4 ROOM,500000", "2026-01,BISHAN,3 ROOM,300000"],
+    )
+    rows = local_store.town_price_summary(
+        [DATASET_A], cutoff_period="2025-01", flat_type="3 ROOM", data_dir=tmp_path
+    )
+    assert len(rows) == 1
+    assert rows[0]["flat_type"] == "3 ROOM"
+
+
+def test_town_price_summary_combines_multiple_datasets(tmp_path):
+    _write_csv(tmp_path / "d_a.csv", ["2026-01,BISHAN,4 ROOM,500000"])
+    _write_csv(tmp_path / "d_b.csv", ["2026-02,BISHAN,4 ROOM,520000"])
+    rows = local_store.town_price_summary(
+        [DATASET_A, DATASET_B], cutoff_period="2025-01", data_dir=tmp_path
+    )
+    assert len(rows) == 1
+    assert rows[0]["count"] == 2
+
+
+def test_town_price_summary_empty_when_nothing_in_window(tmp_path):
+    _write_csv(tmp_path / "d_a.csv", ["2024-01,BISHAN,4 ROOM,400000"])
+    rows = local_store.town_price_summary([DATASET_A], cutoff_period="2025-01", data_dir=tmp_path)
+    assert rows == []
+
+
 def test_warm_cache_skips_already_ingested_datasets(tmp_path):
     csv_path = tmp_path / "d_a.csv"
     _write_csv(csv_path, ["2026-01,BISHAN,4 ROOM,500000"])

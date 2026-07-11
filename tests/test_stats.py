@@ -4,7 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from hdb_bot.stats import group_by_flat_type, monthly_average_series, parse_month, summarize
+from hdb_bot.stats import (
+    earliest_period,
+    filter_recent,
+    group_by_flat_type,
+    monthly_average_series,
+    parse_month,
+    summarize,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 TODAY = date(2026, 7, 15)
@@ -21,6 +28,32 @@ def test_parse_month_valid():
 @pytest.mark.parametrize("bad", ["", "not-a-month", "2026-13", "2026", None])
 def test_parse_month_invalid(bad):
     assert parse_month(bad) is None
+
+
+def test_earliest_period_matches_hand_computed_cutoff():
+    assert earliest_period(12, today=date(2026, 7, 11)) == "2025-08"
+    assert earliest_period(1, today=date(2026, 7, 11)) == "2026-07"
+    assert earliest_period(24, today=date(2026, 1, 15)) == "2024-02"
+
+
+def test_earliest_period_agrees_with_filter_recent():
+    """earliest_period() exists so a SQL query can filter with a plain
+    string comparison instead of pulling every row into Python -- so it
+    must draw exactly the same line as filter_recent()'s in-Python cutoff."""
+    today = date(2026, 7, 15)
+    records = [
+        {"month": "2025-07"},  # one month before the 12-month cutoff
+        {"month": "2025-08"},  # exactly at the cutoff
+        {"month": "2026-07"},
+    ]
+    kept = filter_recent(records, "month", months_window=12, today=today)
+    kept_months = {r["month"] for r in kept}
+
+    cutoff = earliest_period(12, today=today)
+    assert cutoff == "2025-08"
+    assert kept_months == {"2025-08", "2026-07"}
+    assert all(m >= cutoff for m in kept_months)
+    assert "2025-07" not in kept_months
 
 
 def test_summarize_empty_list_returns_empty():

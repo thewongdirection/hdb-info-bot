@@ -147,6 +147,43 @@ async def test_get_carpark_availability_unresolvable_locality():
     assert "error" in result
 
 
+async def test_rank_towns_returns_every_town_sorted_by_median(monkeypatch):
+    rows = [
+        {"town": "BISHAN", "flat_type": "4 ROOM", "count": 3, "mean": 520000, "median": 520000},
+        {"town": "YISHUN", "flat_type": "4 ROOM", "count": 5, "mean": 400000, "median": 400000},
+    ]
+    monkeypatch.setattr(
+        ai_assistant.local_store, "town_price_summary", MagicMock(return_value=rows)
+    )
+
+    result = await ai_assistant._tool_rank_towns("buy")
+
+    assert [t["town"] for t in result["towns"]] == ["YISHUN", "BISHAN"]  # cheapest first
+
+
+async def test_rank_towns_normalizes_flat_type_case(monkeypatch):
+    summary_mock = MagicMock(return_value=[])
+    monkeypatch.setattr(ai_assistant.local_store, "town_price_summary", summary_mock)
+
+    await ai_assistant._tool_rank_towns("buy", flat_type="4-room".replace("-", " "))
+
+    assert summary_mock.call_args.kwargs["flat_type"] == "4 ROOM"
+
+
+async def test_rank_towns_rejects_bad_intent():
+    result = await ai_assistant._tool_rank_towns("invest")
+    assert "error" in result
+
+
+async def test_rank_towns_no_data_returns_empty_with_note(monkeypatch):
+    monkeypatch.setattr(
+        ai_assistant.local_store, "town_price_summary", MagicMock(return_value=[])
+    )
+    result = await ai_assistant._tool_rank_towns("buy")
+    assert result["towns"] == []
+    assert "note" in result
+
+
 # --- tool dispatch ----------------------------------------------------------
 
 
@@ -159,6 +196,14 @@ async def test_execute_tool_dispatches_by_name(monkeypatch):
         data_gov_sg_api_key=None, http_client=None,
     )
     assert result == {"ok": True}
+
+
+async def test_execute_tool_dispatches_rank_towns(monkeypatch):
+    monkeypatch.setattr(ai_assistant, "_tool_rank_towns", AsyncMock(return_value={"towns": []}))
+    result = await ai_assistant._execute_tool(
+        "rank_towns", {"intent": "buy"}, data_gov_sg_api_key=None, http_client=None
+    )
+    assert result == {"towns": []}
 
 
 async def test_execute_tool_unknown_name_returns_error():

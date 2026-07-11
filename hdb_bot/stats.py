@@ -40,6 +40,24 @@ def parse_month(value: str) -> tuple[int, int] | None:
     return None
 
 
+def earliest_period(months_window: int, today: date | None = None) -> str:
+    """The earliest "YYYY-MM" string kept by a `months_window`-month recent
+    window ending today, using the exact same cutoff definition as
+    filter_recent()/summarize() (idx > now_index - months_window).
+
+    Lets a SQL caller (see local_store.town_price_summary) filter to the
+    recent window with a plain string comparison against the stored
+    "YYYY-MM" period column, instead of fetching every row and filtering in
+    Python afterwards -- worth it specifically for citywide queries that
+    span every town at once, where "everything" is most of the dataset.
+    """
+    today = today or date.today()
+    now_index = _month_index(today.year, today.month)
+    earliest_index = now_index - months_window + 1
+    year, month = divmod(earliest_index - 1, 12)
+    return f"{year:04d}-{month + 1:02d}"
+
+
 def filter_recent(
     records: list[dict],
     month_field: str,

@@ -128,20 +128,26 @@ this one needs no Google Maps key at all, the chart is rendered locally.
   have 4-room prices in Tampines moved this year?" or "compare Bishan and
   Yishun" — instead of tapping through the buy/sell/rent/compare menus. See
   [`hdb_bot/ai_assistant.py`](hdb_bot/ai_assistant.py): Claude is used purely
-  as an **orchestrator**, via tool-calling, over four tools that each wrap
+  as an **orchestrator**, via tool-calling, over five tools that each wrap
   the exact same deterministic `stats.py`/`local_store.py`/`carparks.py`
   code the button-based flow already uses (`get_price_stats`,
-  `get_price_trend`, `compare_localities`, `get_carpark_availability`). The
-  model decides which tool(s) to call and phrases the final answer from
-  their real, computed JSON results — its system prompt explicitly forbids
-  estimating or recalling a number from its own knowledge, and forbids
-  stating specific regulatory figures (MOP duration, resale levy, etc.),
-  matching this bot's existing concepts-not-specifics approach. It never
-  invents a price, trend, or lots-available figure. Unlike every other
-  option, Ask AI is a multi-turn conversation rather than a one-shot query —
-  the bot keeps answering follow-up questions instead of returning to the
-  main menu after each one, reminding the user at every reply that `/stop`
-  exits back to the main menu.
+  `get_price_trend`, `compare_localities`, `rank_towns`,
+  `get_carpark_availability`). The model decides which tool(s) to call and
+  phrases the final answer from their real, computed JSON results — its
+  system prompt explicitly forbids estimating or recalling a number from its
+  own knowledge, and forbids stating specific regulatory figures (MOP
+  duration, resale levy, etc.), matching this bot's existing
+  concepts-not-specifics approach. It never invents a price, trend, or
+  lots-available figure. `rank_towns` covers all 26 HDB towns in one call —
+  for "which town is cheapest/dearest" or "rank all districts" questions —
+  unlike `compare_localities`, which is limited to a handful of user-picked
+  areas; see [`local_store.town_price_summary()`](hdb_bot/local_store.py),
+  which aggregates in SQL rather than pulling every town's full history into
+  Python the way a single-locality query does. Unlike every other option,
+  Ask AI is a multi-turn conversation rather than a one-shot query — the
+  bot keeps answering follow-up questions instead of returning to the main
+  menu after each one, reminding the user at every reply that `/stop` exits
+  back to the main menu.
 - **Tone, jargon, and citations**: the bot speaks in a friendly-but-professional
   voice throughout (see [`hdb_bot/formatting.py`](hdb_bot/formatting.py)) and
   is explicit that it provides **general market information, not financial,
