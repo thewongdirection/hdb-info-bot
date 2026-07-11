@@ -36,16 +36,12 @@ _STATS_TERMS_NOTE = (
 
 def greeting() -> str:
     return (
-        "Hello, and welcome! 👋 I'm your HDB resale and rental information "
-        "assistant. I can help you look at price trends for buying, "
-        "selling, or renting a flat, check nearby carpark availability, or "
-        "compare prices across a few districts. What would you like to do?\n\n"
+        "Hello, and welcome! 👋 I'm the HDB property and carpark info bot. "
+        "I can help you look at price trends for buying, selling, or "
+        "renting a flat, check nearby carpark availability, or compare "
+        "prices across a few districts. What would you like to do?\n\n"
         f"{glossary_hint()}"
     )
-
-
-def menu_prompt() -> str:
-    return "What would you like to do next?"
 
 
 def ask_locality(intent: str) -> str:

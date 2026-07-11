@@ -12,10 +12,10 @@ your own maps app.
 
 ```
 You: /start
-Bot: Hello, and welcome! 👋 I'm your HDB resale and rental information
-     assistant. I can help you look at price trends for buying, selling,
-     or renting a flat, check nearby carpark availability, or compare
-     prices across a few districts. What would you like to do?
+Bot: Hello, and welcome! 👋 I'm the HDB property and carpark info bot.
+     I can help you look at price trends for buying, selling, or renting
+     a flat, check nearby carpark availability, or compare prices across
+     a few districts. What would you like to do?
 You: [Buy 🏠]
 Bot: Great, looking to buy a flat. Which area are you interested in?
 You: Bishan
@@ -24,12 +24,13 @@ Bot: Here is the resale price summary for Bishan (last 12 months):
        Median: $520,000  (typical range $505,000–$535,000)
        ...
      [map image with a pin + legend]
-     [📍 Plot blocks on map]  [🔁 New search]
+     [📍 Plot blocks on map]
 You: [📍 Plot blocks on map]
 Bot: [10 interactive Telegram venue pins, most-transacted blocks first]
      📍 That's 10 of 27 HDB block(s) in Bishan (the most-transacted blocks
      first), sent above as interactive map pins — tap any pin to pan,
      zoom, or open it in your maps app for directions.
+     [back at the same welcome message and menu shown above]
 ```
 
 Every substantive reply ends with a source citation and a disclaimer —

@@ -65,8 +65,9 @@ _PLOT_BLOCKS_KEYBOARD = InlineKeyboardMarkup(
 
 
 async def _send_main_menu(message) -> None:
-    """Every branch ends here — no dead ends, always back at the main menu."""
-    await message.reply_text(formatting.menu_prompt(), reply_markup=_INTENT_KEYBOARD)
+    """Every branch ends here — no dead ends, always back at the same
+    starting welcome message and initial options as /start."""
+    await message.reply_text(formatting.greeting(), reply_markup=_INTENT_KEYBOARD)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
