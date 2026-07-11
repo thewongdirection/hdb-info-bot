@@ -228,7 +228,7 @@ address into lat/lng coordinates for the venue pins it sends.
 ## 2. Run it locally
 
 ```bash
-git clone <this repo>
+git clone https://github.com/thewongdirection/hdb-info-bot.git
 cd hdb-info-bot
 python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
@@ -277,7 +277,7 @@ all**.
    sudo apt update && sudo apt install -y python3.12-venv git
    sudo useradd -m -s /bin/bash hdbbot
    sudo su - hdbbot
-   git clone <this repo> hdb-info-bot
+   git clone https://github.com/thewongdirection/hdb-info-bot.git
    cd hdb-info-bot
    python3 -m venv .venv
    source .venv/bin/activate
