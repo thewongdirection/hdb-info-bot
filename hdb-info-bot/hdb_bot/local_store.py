@@ -5,11 +5,24 @@ data.gov.sg directly; only `data_sync.py` does that (see main.py's periodic
 sync job). Each dataset CSV is parsed once and indexed by town in memory;
 `invalidate_cache()` is called after a sync changes any file so the next
 read picks up fresh data.
+
+Each raw CSV row carries several columns (storey_range, floor_area_sqm,
+flat_model, lease_commence_date, remaining_lease, ...) that nothing in this
+codebase ever reads — stats.py, formatting.py, and conversation.py only ever
+touch `town`, `flat_type`, `block`, `street_name`, and the dataset's own
+price/month field names. With ~1.2M rows held in memory for the lifetime of
+the process, keeping the unused columns around is pure waste, so only the
+fields actually consumed are kept. `flat_type`/`town`/the month value are
+also low-cardinality across the whole dataset (a couple dozen towns, ~7 flat
+types, a few hundred distinct months), so they're interned to collapse
+what would otherwise be ~1.2M duplicate string objects down to a few
+hundred shared ones.
 """
 from __future__ import annotations
 
 import csv
 import logging
+import sys
 from pathlib import Path
 
 from .data_sync import default_data_dir
@@ -18,6 +31,8 @@ from .datasets import DatasetInfo
 logger = logging.getLogger(__name__)
 
 _index_cache: dict[str, dict[str, list[dict]]] = {}
+
+_KEPT_TEXT_FIELDS = ("block", "street_name")
 
 
 def invalidate_cache(resource_id: str | None = None) -> None:
@@ -47,12 +62,31 @@ def _load_index(dataset: DatasetInfo, data_dir: Path) -> dict[str, list[dict]]:
         _index_cache[dataset.resource_id] = index
         return index
 
+    price_field = dataset.price_field
+    month_field = dataset.month_field
+
     with path.open(newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
             town = (row.get("town") or "").strip().upper()
             if not town:
                 continue
-            index.setdefault(town, []).append(row)
+
+            trimmed: dict = {
+                "town": town,
+                "flat_type": sys.intern((row.get("flat_type") or "").strip()),
+            }
+            for field in _KEPT_TEXT_FIELDS:
+                trimmed[field] = (row.get(field) or "").strip()
+            if month_field:
+                trimmed[month_field] = sys.intern((row.get(month_field) or "").strip())
+            if price_field:
+                raw_price = row.get(price_field)
+                try:
+                    trimmed[price_field] = float(raw_price) if raw_price else None
+                except ValueError:
+                    trimmed[price_field] = None
+
+            index.setdefault(town, []).append(trimmed)
 
     _index_cache[dataset.resource_id] = index
     return index
