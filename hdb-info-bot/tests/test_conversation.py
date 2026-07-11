@@ -59,7 +59,11 @@ def _make_update_callback(data: str):
 def _make_context(config: Config):
     context = MagicMock()
     context.user_data = {}
-    context.bot_data = {"config": config}
+    # A real GeocodeCache backed by a MagicMock path is fine here: every
+    # test that actually exercises geocoding mocks conversation.geocode_many
+    # directly, so this object's contents never matter -- it just needs to
+    # exist, since conversation.py now requires bot_data["geocode_cache"].
+    context.bot_data = {"config": config, "geocode_cache": MagicMock()}
     return context
 
 

@@ -94,11 +94,14 @@ def geocode_nearest_suggestion(raw_input: str, nearest_town: str) -> str:
 
 
 def no_data_message(towns: list[str]) -> str:
-    town_list = ", ".join(t.title() for t in towns)
     return (
-        f"I checked {town_list} but found very few or no recent "
+        f"I checked {_town_list(towns)} but found very few or no recent "
         "transactions in the data. You might like to try a nearby town instead."
     )
+
+
+def _town_list(towns: list[str]) -> str:
+    return ", ".join(t.title() for t in towns)
 
 
 def _fmt_money(value: float) -> str:
@@ -132,7 +135,7 @@ def format_stats_message(
     note: str | None = None,
     months_window: int = 12,
 ) -> str:
-    town_list = ", ".join(t.title() for t in towns)
+    town_list = _town_list(towns)
     unit = "/month" if intent == "rent" else ""
 
     lines = [f"Here is the resale price summary for *{town_list}* (last {months_window} months):", ""]
@@ -166,7 +169,7 @@ def format_stats_message(
 
 
 def trend_chart_caption(towns: list[str], intent: str, months_window: int) -> str:
-    town_list = ", ".join(t.title() for t in towns)
+    town_list = _town_list(towns)
     what = "rental price" if intent == "rent" else "resale price"
     return (
         f"📊 Average {what} by flat type, last {months_window} months — "
@@ -199,7 +202,7 @@ def block_map_failed_message() -> str:
 
 
 def block_venues_summary(towns: list[str], geocoded_count: int, total_count: int) -> str:
-    town_list = ", ".join(t.title() for t in towns)
+    town_list = _town_list(towns)
     lines = [
         f"📍 That's {geocoded_count} of {total_count} HDB block(s) in *{town_list}* "
         "(the most-transacted blocks first), sent above as interactive map pins — "
@@ -211,14 +214,13 @@ def block_venues_summary(towns: list[str], geocoded_count: int, total_count: int
 
 
 def no_carparks_message(towns: list[str]) -> str:
-    town_list = ", ".join(t.title() for t in towns)
-    return f"I checked {town_list} but couldn't find any HDB carparks there, unfortunately."
+    return f"I checked {_town_list(towns)} but couldn't find any HDB carparks there, unfortunately."
 
 
 def format_carpark_message(
     towns: list[str], carparks: list[dict], note: str | None = None, shown_limit: int = 15
 ) -> str:
-    town_list = ", ".join(t.title() for t in towns)
+    town_list = _town_list(towns)
     lines = [f"🅿️ Here are the carparks near *{town_list}*:", ""]
     if note:
         lines.append(f"ℹ️ {note}")

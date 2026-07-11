@@ -19,7 +19,7 @@ from telegram.ext import (
 from . import carparks, formatting, local_store
 from .charts import build_price_comparison_chart
 from .datasets import DATASETS_FOR_INTENT
-from .geocoding import GeocodeCache, geocode_many
+from .geocoding import geocode_many
 from .glossary import format_full_glossary
 from .localities import LocalityMatch, LocalityNotFound, resolve
 from .maps import nearest_town
@@ -80,6 +80,23 @@ async def _send_main_menu(message) -> None:
     await message.reply_text(formatting.greeting(), reply_markup=_INTENT_KEYBOARD)
 
 
+async def _bail_to_main_menu(message, text: str) -> int:
+    """The shared shape for every "nothing to do here" branch — no prior
+    query, missing config, no data/results found: explain briefly, then
+    back to the main menu."""
+    await message.reply_text(text)
+    await _send_main_menu(message)
+    return CHOOSING_INTENT
+
+
+async def _reprompt_locality(message, text: str) -> int:
+    """The shared shape for every "please try again" branch while asking
+    for a locality: send `text` with the always-available Main Menu button
+    attached, and stay in ASKING_LOCALITY."""
+    await message.reply_text(text, reply_markup=_MAIN_MENU_ONLY_KEYBOARD)
+    return ASKING_LOCALITY
+
+
 async def _load_records_for_towns(datasets: list, towns: list[str]) -> list[dict]:
     """Fetch every town's records concurrently rather than one at a time —
     each is an independent SQLite read, so there's no reason to serialize
@@ -138,8 +155,7 @@ async def intent_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     await query.answer()
     intent = query.data.split(":", 1)[1]
     context.user_data["intent"] = intent
-    await query.message.reply_text(formatting.ask_locality(intent), reply_markup=_MAIN_MENU_ONLY_KEYBOARD)
-    return ASKING_LOCALITY
+    return await _reprompt_locality(query.message, formatting.ask_locality(intent))
 
 
 async def _suggest_town_via_geocoding(text: str, context: ContextTypes.DEFAULT_TYPE) -> str | None:
@@ -152,9 +168,11 @@ async def _suggest_town_via_geocoding(text: str, context: ContextTypes.DEFAULT_T
     config = context.bot_data["config"]
     if not config.google_maps_api_key:
         return None
-    cache = GeocodeCache()
     geocoded = await geocode_many(
-        [text], config.google_maps_api_key, cache, client=context.bot_data.get("http_client")
+        [text],
+        config.google_maps_api_key,
+        context.bot_data["geocode_cache"],
+        client=context.bot_data.get("http_client"),
     )
     coords = geocoded.get(text)
     if coords is None:
@@ -176,15 +194,12 @@ async def locality_received(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if not exc.suggestions:
             suggested_town = await _suggest_town_via_geocoding(text, context)
             if suggested_town:
-                await update.message.reply_text(
-                    formatting.geocode_nearest_suggestion(text, suggested_town),
-                    reply_markup=_MAIN_MENU_ONLY_KEYBOARD,
+                return await _reprompt_locality(
+                    update.message, formatting.geocode_nearest_suggestion(text, suggested_town)
                 )
-                return ASKING_LOCALITY
-        await update.message.reply_text(
-            formatting.locality_not_found(text, exc.suggestions), reply_markup=_MAIN_MENU_ONLY_KEYBOARD
+        return await _reprompt_locality(
+            update.message, formatting.locality_not_found(text, exc.suggestions)
         )
-        return ASKING_LOCALITY
 
     if intent == "carparks":
         return await _handle_carparks_query(update, context, match)
@@ -210,10 +225,7 @@ async def _handle_price_query(
 
     if not stats:
         await update.message.reply_text(formatting.no_data_message(match.towns))
-        await update.message.reply_text(
-            formatting.ask_locality(intent), reply_markup=_MAIN_MENU_ONLY_KEYBOARD
-        )
-        return ASKING_LOCALITY
+        return await _reprompt_locality(update.message, formatting.ask_locality(intent))
 
     message = formatting.format_stats_message(
         intent, match.towns, stats, note=match.note, months_window=config.recent_months_window
@@ -246,10 +258,7 @@ async def _handle_carparks_query(
     matched = await asyncio.to_thread(carparks.get_carparks_for_towns, match.towns)
     if not matched:
         await update.message.reply_text(formatting.no_carparks_message(match.towns))
-        await update.message.reply_text(
-            formatting.ask_locality("carparks"), reply_markup=_MAIN_MENU_ONLY_KEYBOARD
-        )
-        return ASKING_LOCALITY
+        return await _reprompt_locality(update.message, formatting.ask_locality("carparks"))
 
     availability = await carparks.fetch_availability(
         config.data_gov_sg_api_key, client=context.bot_data.get("http_client")
@@ -285,10 +294,9 @@ async def _handle_compare_query(
     raw_entries = [e.strip() for e in text.split(",") if e.strip()]
 
     if not raw_entries:
-        await update.message.reply_text(
-            formatting.compare_no_valid_localities_message([text]), reply_markup=_MAIN_MENU_ONLY_KEYBOARD
+        return await _reprompt_locality(
+            update.message, formatting.compare_no_valid_localities_message([text])
         )
-        return ASKING_LOCALITY
 
     dropped_count = 0
     if len(raw_entries) > MAX_COMPARE_ENTRIES:
@@ -304,10 +312,9 @@ async def _handle_compare_query(
             failed.append(entry)
 
     if not resolved:
-        await update.message.reply_text(
-            formatting.compare_no_valid_localities_message(failed), reply_markup=_MAIN_MENU_ONLY_KEYBOARD
+        return await _reprompt_locality(
+            update.message, formatting.compare_no_valid_localities_message(failed)
         )
-        return ASKING_LOCALITY
 
     # buy/sell both read the resale dataset group — a comparison of "average
     # prices" is inherently about the resale market.
@@ -337,10 +344,7 @@ async def _handle_compare_query(
     if not series:
         labels = [label.title() for label, _ in resolved]
         await update.message.reply_text(formatting.compare_no_data_message(labels))
-        await update.message.reply_text(
-            formatting.ask_locality("compare"), reply_markup=_MAIN_MENU_ONLY_KEYBOARD
-        )
-        return ASKING_LOCALITY
+        return await _reprompt_locality(update.message, formatting.ask_locality("compare"))
 
     if failed:
         await update.message.reply_text(formatting.compare_partial_failure_note(failed))
@@ -363,15 +367,11 @@ async def show_block_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     last_query = context.user_data.get("last_query")
     if not last_query:
-        await query.message.reply_text(formatting.run_a_search_first_message())
-        await _send_main_menu(query.message)
-        return CHOOSING_INTENT
+        return await _bail_to_main_menu(query.message, formatting.run_a_search_first_message())
 
     config = context.bot_data["config"]
     if not config.google_maps_api_key:
-        await query.message.reply_text(formatting.no_maps_configured_message())
-        await _send_main_menu(query.message)
-        return CHOOSING_INTENT
+        return await _bail_to_main_menu(query.message, formatting.no_maps_configured_message())
 
     intent = last_query["intent"]
     towns = last_query["towns"]
@@ -393,20 +393,18 @@ async def show_block_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     counts_by_address = dict(top_entries)
 
     if not addresses:
-        await query.message.reply_text(formatting.block_map_no_data_message())
-        await _send_main_menu(query.message)
-        return CHOOSING_INTENT
+        return await _bail_to_main_menu(query.message, formatting.block_map_no_data_message())
 
     await query.message.reply_text(formatting.geocoding_in_progress_message(len(addresses)))
 
-    cache = GeocodeCache()
     geocoded = await geocode_many(
-        addresses, config.google_maps_api_key, cache, client=context.bot_data.get("http_client")
+        addresses,
+        config.google_maps_api_key,
+        context.bot_data["geocode_cache"],
+        client=context.bot_data.get("http_client"),
     )
     if not geocoded:
-        await query.message.reply_text(formatting.block_map_failed_message())
-        await _send_main_menu(query.message)
-        return CHOOSING_INTENT
+        return await _bail_to_main_menu(query.message, formatting.block_map_failed_message())
 
     # Sent as native Telegram venues rather than a static image — each pin is
     # individually pannable/zoomable within Telegram and can be tapped to
@@ -438,9 +436,7 @@ async def show_price_trend_chart(update: Update, context: ContextTypes.DEFAULT_T
 
     last_query = context.user_data.get("last_query")
     if not last_query:
-        await query.message.reply_text(formatting.run_a_search_first_message())
-        await _send_main_menu(query.message)
-        return CHOOSING_INTENT
+        return await _bail_to_main_menu(query.message, formatting.run_a_search_first_message())
 
     intent = last_query["intent"]
     towns = last_query["towns"]
@@ -466,9 +462,7 @@ async def show_price_trend_chart(update: Update, context: ContextTypes.DEFAULT_T
     )
 
     if chart_bytes is None:
-        await query.message.reply_text(formatting.no_trend_chart_data_message())
-        await _send_main_menu(query.message)
-        return CHOOSING_INTENT
+        return await _bail_to_main_menu(query.message, formatting.no_trend_chart_data_message())
 
     await query.message.reply_photo(
         photo=chart_bytes,
@@ -486,9 +480,7 @@ async def show_carpark_map(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     car_park_no = query.data.split(":", 1)[1]
     carparks_by_no = context.user_data.get("last_carparks_by_no")
     if not carparks_by_no or car_park_no not in carparks_by_no:
-        await query.message.reply_text(formatting.run_a_search_first_message())
-        await _send_main_menu(query.message)
-        return CHOOSING_INTENT
+        return await _bail_to_main_menu(query.message, formatting.run_a_search_first_message())
 
     carpark = carparks_by_no[car_park_no]
     await query.message.reply_text(

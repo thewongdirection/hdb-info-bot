@@ -30,7 +30,14 @@ def default_cache_path() -> Path:
 
 
 class GeocodeCache:
-    """address -> [lat, lng] or None (a confirmed non-geocodable address)."""
+    """address -> [lat, lng] or None (a confirmed non-geocodable address).
+
+    Meant to be created once and shared for the app's whole lifetime (see
+    main.py, where one lives in bot_data) rather than instantiated per
+    request — each instantiation re-reads and re-parses the whole cache
+    file from disk, and if two independent instances both geocoded new
+    addresses and called save(), whichever wrote last would silently
+    overwrite the other's new entries."""
 
     def __init__(self, path: Path | None = None):
         self.path = path or default_cache_path()
@@ -125,6 +132,6 @@ async def geocode_many(
         else:
             async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as new_client:
                 await asyncio.gather(*(_fetch(a, new_client) for a in to_fetch))
-        cache.save()
+        await asyncio.to_thread(cache.save)
 
     return results

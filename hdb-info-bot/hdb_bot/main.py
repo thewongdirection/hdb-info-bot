@@ -6,9 +6,11 @@ any host that gives you a public HTTPS URL and a $PORT to listen on.
 
 Either way, a full dataset sync runs once (blocking) before the bot starts
 serving, and then repeats in the background on `SYNC_INTERVAL_HOURS` — see
-data_sync.py and local_store.py. The local SQLite cache is also eagerly
-warmed right after each sync (startup and periodic alike) so a user's first
-query is never the one paying the ingest cost.
+data_sync.py and local_store.py. The local SQLite cache and the chart
+renderer are also eagerly warmed at startup (and the SQLite cache again
+after any sync that changes a file) so a user's first query is never the
+one paying the ingest/render cost. A shared HTTP client and geocode cache
+live in bot_data for the app's whole lifetime — see _post_init.
 """
 from __future__ import annotations
 
@@ -26,6 +28,7 @@ from .config import Config, load_config
 from .conversation import build_conversation_handler, error_handler
 from .data_sync import DataSyncer
 from .datasets import LOCAL_STORE_DATASETS
+from .geocoding import GeocodeCache
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO
@@ -61,6 +64,12 @@ async def _post_init(application: Application) -> None:
     # client — reuses one TCP+TLS connection per host instead of paying for
     # a fresh handshake on every single request.
     application.bot_data["http_client"] = httpx.AsyncClient(timeout=15.0)
+
+    # Same reasoning as http_client: one shared instance for the app's
+    # lifetime, not one per request — otherwise every geocoding call
+    # re-reads the whole cache file from disk, and two concurrent requests
+    # each calling save() could silently overwrite each other's new entries.
+    application.bot_data["geocode_cache"] = await asyncio.to_thread(GeocodeCache)
 
     logger.info("Running initial dataset sync (this can take a minute the first time)...")
     results = await syncer.sync_all()

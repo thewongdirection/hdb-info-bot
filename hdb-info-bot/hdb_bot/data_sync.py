@@ -36,14 +36,6 @@ BASE_BACKOFF_SECONDS = 2.0
 POLL_ATTEMPTS = 10
 POLL_INTERVAL_SECONDS = 2.0
 DEFAULT_TIMEOUT_SECONDS = 120.0
-# Sequential, not concurrent: data.gov.sg's initiate-download/poll-download
-# endpoints have a rate limit tight enough that even 2-3 concurrent dataset
-# syncs reliably trip 429s (observed in production — see git history for
-# this line). A single dataset's sync already overlaps network wait time
-# with nothing else useful to do, so there's no real latency cost to
-# serializing them, and it avoids silently ending up with missing/stale
-# datasets when the rate limit bites.
-SYNC_CONCURRENCY = 1
 
 
 def default_data_dir() -> Path:
@@ -191,21 +183,19 @@ class DataSyncer:
         return SyncResult(dataset.resource_id, dataset.label, changed=True, row_count=row_count)
 
     async def sync_all(self, *, force: bool = False) -> list[SyncResult]:
-        """Sync every registered dataset, sharing one connection pool.
+        """Sync every registered dataset, one at a time, sharing one
+        connection pool.
 
-        SYNC_CONCURRENCY controls how many run at once — kept at 1 (fully
-        sequential) because data.gov.sg's initiate-download/poll-download
-        endpoints have a rate limit tight enough that even 2-3 concurrent
-        dataset syncs reliably trip 429s in practice, which risks ending up
-        with missing/stale local data rather than saving meaningful time."""
-        semaphore = asyncio.Semaphore(SYNC_CONCURRENCY)
-
-        async def _bounded(dataset: DatasetInfo, client: httpx.AsyncClient) -> SyncResult:
-            async with semaphore:
-                return await self.sync_dataset(dataset, client=client, force=force)
-
+        Deliberately sequential, not concurrent: data.gov.sg's
+        initiate-download/poll-download endpoints have a rate limit tight
+        enough that even 2-3 concurrent dataset syncs reliably trip 429s in
+        practice (observed in production), which risks ending up with
+        missing/stale local data rather than saving meaningful time.
+        """
+        results: list[SyncResult] = []
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            results = await asyncio.gather(*(_bounded(d, client) for d in ALL_DATASETS))
+            for dataset in ALL_DATASETS:
+                results.append(await self.sync_dataset(dataset, client=client, force=force))
 
         for result in results:
             if result.error:
@@ -214,4 +204,4 @@ class DataSyncer:
                 logger.info("Synced %s: %s rows", result.label, result.row_count)
             else:
                 logger.debug("%s already up to date", result.label)
-        return list(results)
+        return results
