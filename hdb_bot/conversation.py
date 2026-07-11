@@ -145,9 +145,11 @@ async def intent_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     context.user_data["intent"] = intent
 
     if intent == "ask_ai":
-        await query.message.reply_text(
-            formatting.ask_ai_prompt_message(), reply_markup=_MAIN_MENU_ONLY_KEYBOARD
-        )
+        # No "Main Menu" button here on purpose: /stop is the one documented
+        # way out of AI Q&A mode (see ai_question_received), so the user
+        # keeps getting follow-up answers instead of being bounced out by an
+        # accidental tap.
+        await query.message.reply_text(formatting.ask_ai_prompt_message())
         return ASKING_AI_QUESTION
 
     return await _reprompt_locality(query.message, formatting.ask_locality(intent))
@@ -218,11 +220,22 @@ async def ai_question_received(update: Update, context: ContextTypes.DEFAULT_TYP
         )
     except Exception:
         logger.exception("AI assistant call failed")
-        return await _bail_to_main_menu(update.message, formatting.ai_unavailable_message())
+        await update.message.reply_text(
+            f"{formatting.ai_unavailable_message()}\n\n{formatting.ai_exit_hint()}"
+        )
+        return ASKING_AI_QUESTION
 
-    await update.message.reply_text(f"{answer}\n\n{SOURCES_FOOTER}")
-    await _send_main_menu(update.message)
-    return CHOOSING_INTENT
+    # Stays in ASKING_AI_QUESTION rather than returning to the main menu —
+    # this is a back-and-forth Q&A, not a one-shot query like the button
+    # flows, so the user keeps asking follow-ups until they explicitly /stop.
+    await update.message.reply_text(
+        f"{answer}\n\n{SOURCES_FOOTER}\n\n{formatting.ai_exit_hint()}"
+    )
+    return ASKING_AI_QUESTION
+
+
+async def ai_question_stopped(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    return await _bail_to_main_menu(update.effective_message, formatting.ai_stopped_message())
 
 
 async def _handle_price_query(
@@ -550,6 +563,7 @@ def build_conversation_handler() -> ConversationHandler:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, locality_received),
             ],
             ASKING_AI_QUESTION: [
+                CommandHandler("stop", ai_question_stopped),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, ai_question_received),
             ],
         },

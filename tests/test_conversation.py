@@ -602,6 +602,8 @@ async def test_intent_chosen_ask_ai_prompts_for_a_question():
 
     assert state == conversation.ASKING_AI_QUESTION
     update.callback_query.message.reply_text.assert_awaited_once()
+    prompt_text = update.callback_query.message.reply_text.await_args.args[0]
+    assert "/stop" in prompt_text
 
 
 async def test_ai_question_received_not_configured_bails_to_main_menu():
@@ -615,7 +617,7 @@ async def test_ai_question_received_not_configured_bails_to_main_menu():
     assert "isn't enabled" in all_text or "not enabled" in all_text.lower()
 
 
-async def test_ai_question_received_success_sends_answer_and_footer(monkeypatch):
+async def test_ai_question_received_success_sends_answer_and_stays_in_ai_mode(monkeypatch):
     ask_mock = AsyncMock(return_value="4-room flats in Bishan averaged $520,000 recently.")
     monkeypatch.setattr(conversation.ai_assistant, "ask", ask_mock)
 
@@ -625,14 +627,17 @@ async def test_ai_question_received_success_sends_answer_and_footer(monkeypatch)
 
     state = await conversation.ai_question_received(update, context)
 
-    assert state == conversation.CHOOSING_INTENT
+    # Stays in the AI conversation rather than bouncing back to the main
+    # menu after every answer -- only /stop should exit AI Q&A mode.
+    assert state == conversation.ASKING_AI_QUESTION
     ask_mock.assert_awaited_once()
     all_text = " ".join(str(c.args) for c in update.message.reply_text.await_args_list)
     assert "$520,000" in all_text
     assert "data.gov.sg" in all_text  # SOURCES_FOOTER
+    assert "/stop" in all_text  # reminded how to exit
 
 
-async def test_ai_question_received_failure_bails_to_main_menu(monkeypatch):
+async def test_ai_question_received_failure_stays_in_ai_mode_for_retry(monkeypatch):
     ask_mock = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr(conversation.ai_assistant, "ask", ask_mock)
 
@@ -642,6 +647,21 @@ async def test_ai_question_received_failure_bails_to_main_menu(monkeypatch):
 
     state = await conversation.ai_question_received(update, context)
 
-    assert state == conversation.CHOOSING_INTENT
+    # A transient AI-service failure shouldn't kick the user out of AI mode
+    # either -- they can just ask again or /stop themselves.
+    assert state == conversation.ASKING_AI_QUESTION
     all_text = " ".join(str(c.args) for c in update.message.reply_text.await_args_list)
     assert "wasn't able to reach" in all_text.lower()
+    assert "/stop" in all_text
+
+
+async def test_ai_question_stopped_returns_to_main_menu():
+    update = MagicMock()
+    update.effective_message.reply_text = AsyncMock()
+    context = _make_context(_make_config(anthropic_api_key="fake-key"))
+
+    state = await conversation.ai_question_stopped(update, context)
+
+    assert state == conversation.CHOOSING_INTENT
+    all_text = " ".join(str(c.args) for c in update.effective_message.reply_text.await_args_list)
+    assert "leaving ai" in all_text.lower() or "exiting" in all_text.lower()

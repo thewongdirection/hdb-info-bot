@@ -190,7 +190,8 @@ def ask_ai_prompt_message() -> str:
         "Ask me anything about HDB resale/rental prices or carpark availability — "
         "e.g. \"how have 4-room prices in Tampines moved this year?\" or "
         "\"compare Bishan and Yishun resale prices\". I'll only answer using the "
-        "real data.gov.sg figures, never a guess."
+        "real data.gov.sg figures, never a guess.\n\n"
+        f"{ai_exit_hint()}"
     )
 
 
@@ -203,7 +204,15 @@ def ai_thinking_message() -> str:
 
 
 def ai_unavailable_message() -> str:
-    return "I wasn't able to reach the AI service just now — please try again shortly, or use the menu options instead."
+    return "I wasn't able to reach the AI service just now — please try asking again."
+
+
+def ai_exit_hint() -> str:
+    return "Send /stop anytime to leave AI Q&A mode and return to the main menu."
+
+
+def ai_stopped_message() -> str:
+    return "Okay, leaving AI Q&A mode."
 
 
 def run_a_search_first_message() -> str:

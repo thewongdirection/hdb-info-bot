@@ -137,7 +137,11 @@ this one needs no Google Maps key at all, the chart is rendered locally.
   estimating or recalling a number from its own knowledge, and forbids
   stating specific regulatory figures (MOP duration, resale levy, etc.),
   matching this bot's existing concepts-not-specifics approach. It never
-  invents a price, trend, or lots-available figure.
+  invents a price, trend, or lots-available figure. Unlike every other
+  option, Ask AI is a multi-turn conversation rather than a one-shot query —
+  the bot keeps answering follow-up questions instead of returning to the
+  main menu after each one, reminding the user at every reply that `/stop`
+  exits back to the main menu.
 - **Tone, jargon, and citations**: the bot speaks in a friendly-but-professional
   voice throughout (see [`hdb_bot/formatting.py`](hdb_bot/formatting.py)) and
   is explicit that it provides **general market information, not financial,
