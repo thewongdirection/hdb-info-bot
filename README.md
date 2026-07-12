@@ -127,16 +127,20 @@ this one needs no Google Maps key at all, the chart is rendered locally.
   enabled). Lets a user ask a data question in plain English — e.g. "how
   have 4-room prices in Tampines moved this year?" or "compare Bishan and
   Yishun" — instead of tapping through the buy/sell/rent/compare menus. See
-  [`hdb_bot/ai_assistant.py`](hdb_bot/ai_assistant.py): Claude is used purely
-  as an **orchestrator**, via tool-calling, over five tools that each wrap
-  the exact same deterministic `stats.py`/`local_store.py`/`carparks.py`
-  code the button-based flow already uses (`get_price_stats`,
-  `get_price_trend`, `compare_localities`, `rank_towns`,
-  `get_carpark_availability`). The model decides which tool(s) to call and
-  phrases the final answer from their real, computed JSON results — its
-  system prompt explicitly forbids estimating or recalling a number from its
-  own knowledge, and forbids stating specific regulatory figures (MOP
-  duration, resale levy, etc.), matching this bot's existing
+  [`hdb_bot/ai_assistant.py`](hdb_bot/ai_assistant.py): Claude is briefed as
+  an experienced HDB property consultant — knowledgeable about local market
+  trends, estate characteristics, and regulations, so it interprets and
+  contextualizes results the way a real consultant would (e.g. why a mature
+  estate commands a premium) — but used purely as an **orchestrator**, via
+  tool-calling, over five tools that each wrap the exact same deterministic
+  `stats.py`/`local_store.py`/`carparks.py` code the button-based flow
+  already uses (`get_price_stats`, `get_price_trend`, `compare_localities`,
+  `rank_towns`, `get_carpark_availability`). The model decides which
+  tool(s) to call and phrases the final answer from their real, computed
+  JSON results — its system prompt explicitly forbids estimating or
+  recalling a number from its own knowledge no matter how expert it sounds,
+  and forbids stating specific regulatory figures (MOP duration, resale
+  levy, etc.) as if fixed, matching this bot's existing
   concepts-not-specifics approach. It never invents a price, trend, or
   lots-available figure. `rank_towns` covers all 26 HDB towns in one call —
   for "which town is cheapest/dearest" or "rank all districts" questions —
