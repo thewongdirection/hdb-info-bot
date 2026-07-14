@@ -209,8 +209,42 @@ def resolve(text: str) -> LocalityMatch:
             return LocalityMatch(towns=[town], method="town_alias", raw_input=raw)
 
     # 6. Fuzzy match (typos, partial words) against towns + aliases.
+    #
+    # A bare SequenceMatcher.ratio() cutoff isn't enough: it scores how many
+    # characters match in total without caring whether the input and
+    # candidate are even close in length. "SENTOSA" (7 chars) vs the
+    # "EUNOS" alias (5 chars) scores 0.667 — comfortably over the 0.6
+    # cutoff — purely from a handful of scattered single-character
+    # coincidences, not real similarity. That let "Sentosa" (a resort
+    # island with zero HDB flats) resolve confidently to GEYLANG.
+    #
+    # Requiring the two strings to be close in length fixes that, but a
+    # flat length-ratio requirement is too strict on its own: legitimate
+    # matches like "downtown" -> the "TOWN" alias are exactly this
+    # shape — a short candidate against a much longer input — and must
+    # keep working. What makes "downtown" legitimate is that "TOWN"
+    # matches *in full*, as one unbroken run, i.e. it's a genuine substring
+    # of the input rather than scattered fragments. So a large length gap
+    # is only forgiven when the shorter string is fully, contiguously
+    # contained in the longer one.
     candidates = HDB_TOWNS + list(TOWN_ALIASES.keys())
-    close = difflib.get_close_matches(cleaned, candidates, n=3, cutoff=0.6)
+    scored = []
+    for c in candidates:
+        matcher = difflib.SequenceMatcher(None, cleaned, c)
+        ratio = matcher.ratio()
+        if ratio < 0.6:
+            continue
+        shorter_len = min(len(cleaned), len(c))
+        longer_len = max(len(cleaned), len(c))
+        if shorter_len / longer_len < 0.8:
+            longest_run = max(
+                (m.size for m in matcher.get_matching_blocks()), default=0
+            )
+            if longest_run < shorter_len:
+                continue
+        scored.append((ratio, c))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    close = [c for _, c in scored[:3]]
     resolved_towns = []
     for c in close:
         town = TOWN_ALIASES.get(c, c)

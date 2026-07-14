@@ -98,6 +98,49 @@ def test_all_district_towns_are_valid_hdb_towns():
             assert town in HDB_TOWNS
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Sentosa",
+        "Sentosa Island",
+        "Sentosa Cove",
+        "Marina Bay Sands",
+        "Marina Bay",
+        "Gardens by the Bay",
+        "Orchard Road",
+        "Holland Village",
+        "Raffles Place",
+        "Changi Airport",
+        "Botanic Gardens",
+        "Pulau Ubin",
+        "Universal Studios Singapore",
+        "Mount Faber",
+        "Labrador Park",
+        "Fort Canning",
+        "Keppel Bay",
+        "Tanjong Pagar",
+    ],
+)
+def test_non_hdb_singapore_landmarks_are_not_confidently_misresolved(text):
+    # Regression test: the fuzzy-match step used to accept a single
+    # confident match purely on SequenceMatcher.ratio(), which doesn't
+    # check whether the matched characters are a real contiguous overlap
+    # or just scattered coincidences. "SENTOSA" vs the "EUNOS" alias
+    # (-> GEYLANG) scored 0.667 -- comfortably over the old 0.6 cutoff --
+    # from three tiny scattered fragments, so resolve("Sentosa") returned
+    # a confident (and wrong) GEYLANG match instead of raising. None of
+    # these places have HDB flats, so they must either raise
+    # LocalityNotFound or -- if they ever do resolve -- never claim a
+    # confident single-town match that isn't genuinely plausible.
+    try:
+        match = resolve(text)
+    except LocalityNotFound:
+        return
+    assert match.method != "town_fuzzy", (
+        f"{text!r} should not confidently fuzzy-match a town, got {match.towns}"
+    )
+
+
 def test_queenstown_typo_is_not_shadowed_by_the_generic_town_alias():
     # Regression test: a bare substring check for the "TOWN" alias (->
     # CENTRAL AREA) used to intercept any typo of "QUEENSTOWN" that kept
