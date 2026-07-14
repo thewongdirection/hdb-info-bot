@@ -118,10 +118,15 @@ this one needs no Google Maps key at all, the chart is rendered locally.
   comma-separated areas (towns/postal codes/district numbers, freely mixed)
   and charts their monthly average resale price side by side over
   `CHART_MONTHS_WINDOW` months (default 24), capped at 6 areas per chart for
-  legibility — every entry that resolves gets its own line, not just the
-  first couple. Rendered locally with matplotlib
+  legibility — every entry that resolves *and* has recent transactions gets
+  its own line, not just the first couple; an entry that resolves fine but
+  has no recent data is reported by name rather than silently vanishing from
+  the chart. Rendered locally with matplotlib
   ([`hdb_bot/charts.py`](hdb_bot/charts.py)) — no external chart service
-  needed, so the charting itself always works. Real place names that aren't
+  needed, so the charting itself always works. Each line gets its own
+  marker shape and line style (not just color), since two HDB towns often
+  land within a few thousand dollars of each other and pure color can be
+  hard to tell apart on a small screen. Real place names that aren't
   exact HDB town/alias matches (e.g. "Orchard", "Clarke Quay") are resolved
   on a best-effort basis: if `GOOGLE_MAPS_API_KEY` is configured, an
   unresolved or ambiguous entry is geocoded to its nearest actual HDB town

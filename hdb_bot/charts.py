@@ -19,6 +19,14 @@ import matplotlib.ticker as mticker  # noqa: E402
 FIGURE_SIZE = (10, 5.5)
 DPI = 150
 
+# Two HDB towns often land within a few thousand dollars of each other, so
+# color alone isn't always enough to tell two lines apart at a glance —
+# especially on a small phone screen. Cycling marker shape and line style
+# per series (on top of matplotlib's own color cycle) keeps every line
+# individually traceable even where two of them run close together or cross.
+_MARKERS = ["o", "s", "^", "D", "v", "P"]
+_LINESTYLES = ["-", "--", "-.", ":"]
+
 
 def build_price_comparison_chart(
     series: dict[str, list[tuple[str, float]]],
@@ -46,6 +54,7 @@ def build_price_comparison_chart(
     x_positions = range(len(all_months))
 
     fig, ax = plt.subplots(figsize=FIGURE_SIZE, dpi=DPI)
+    plotted = 0
     for label, points in series.items():
         if not points:
             continue
@@ -53,7 +62,13 @@ def build_price_comparison_chart(
         for month, avg_price in points:
             y[month_index[month]] = avg_price
         # NaN gaps break the line rather than connecting across missing months.
-        ax.plot(x_positions, y, marker="o", markersize=3, linewidth=1.75, label=label)
+        ax.plot(
+            x_positions, y,
+            marker=_MARKERS[plotted % len(_MARKERS)],
+            linestyle=_LINESTYLES[plotted % len(_LINESTYLES)],
+            markersize=4, linewidth=1.75, label=label,
+        )
+        plotted += 1
 
     ax.set_title(title)
     ax.set_ylabel(f"Average Price{f' ({price_unit_suffix})' if price_unit_suffix else ''} (S$)")

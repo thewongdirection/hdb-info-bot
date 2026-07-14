@@ -353,6 +353,11 @@ def compare_no_data_message(labels: list[str]) -> str:
     return f"I checked {label_list} but there is no recent resale data available for any of them, unfortunately."
 
 
+def compare_no_recent_data_note(labels: list[str]) -> str:
+    label_list = ", ".join(repr(e) for e in labels)
+    return f"ℹ️ No recent resale transactions for: {label_list} — excluded from the chart, showing the rest."
+
+
 def compare_chart_caption(labels: list[str], months_window: int) -> str:
     label_list = ", ".join(labels)
     return (

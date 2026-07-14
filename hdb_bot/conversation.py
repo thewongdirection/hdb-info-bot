@@ -406,9 +406,22 @@ async def _handle_compare_query(
     # Each district's records are independent of the others, so fetch all of
     # them concurrently instead of working through the list one at a time.
     per_district = await asyncio.gather(*(_points_for(label, match) for label, match in resolved))
-    series: dict[str, list[tuple[str, float]]] = {
-        label.title(): points for label, points in per_district if points
-    }
+    series: dict[str, list[tuple[str, float]]] = {}
+    no_data: list[str] = []
+    for label, points in per_district:
+        if points:
+            series[label.title()] = points
+        else:
+            # Resolved fine, but zero chartable transactions in the window --
+            # a real, if rare, way for an entry to vanish from the chart with
+            # no explanation unless we say so here (distinct from `failed`,
+            # which never resolved to a town at all).
+            no_data.append(label)
+
+    logger.info(
+        "compare: input=%r resolved=%s no_data=%s failed=%s chart_series=%s",
+        text, [label for label, _ in resolved], no_data, failed, list(series.keys()),
+    )
 
     if not series:
         labels = [label.title() for label, _ in resolved]
@@ -419,6 +432,8 @@ async def _handle_compare_query(
         await update.message.reply_text(formatting.compare_partial_failure_note(failed))
     if approximated:
         await update.message.reply_text(formatting.compare_approximated_note(approximated))
+    if no_data:
+        await update.message.reply_text(formatting.compare_no_recent_data_note(no_data))
     if dropped_count:
         await update.message.reply_text(formatting.compare_too_many_note(dropped_count, MAX_COMPARE_ENTRIES))
 

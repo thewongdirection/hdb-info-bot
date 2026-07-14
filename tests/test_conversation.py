@@ -499,6 +499,29 @@ async def test_compare_no_data_reprompts(monkeypatch):
     update.message.reply_photo.assert_not_awaited()
 
 
+async def test_compare_resolved_entry_with_no_recent_data_is_noted_not_silently_dropped(monkeypatch):
+    # Bishan has resale records, Sengkang has none in this scenario -- both
+    # resolve fine, but only Bishan has anything to chart. The user must be
+    # told Sengkang was excluded, not just see a chart that quietly has one
+    # fewer line than they asked for.
+    def _fake_load(datasets, town, **kwargs):
+        return _COMPARE_RECORDS if town == "BISHAN" else []
+
+    monkeypatch.setattr(conversation.local_store, "load_town_records", _fake_load)
+
+    context = _make_context(_make_config())
+    context.user_data["intent"] = "compare"
+    update = _make_update_message("Bishan, Sengkang")
+
+    state = await conversation.locality_received(update, context)
+
+    assert state == conversation.CHOOSING_INTENT
+    update.message.reply_photo.assert_awaited_once()
+    all_text = " ".join(str(c.args) for c in update.message.reply_text.await_args_list)
+    assert "Sengkang" in all_text
+    assert "no recent" in all_text.lower()
+
+
 async def test_compare_caps_entries_at_max(monkeypatch):
     monkeypatch.setattr(
         conversation.local_store, "load_town_records", MagicMock(return_value=_COMPARE_RECORDS)
