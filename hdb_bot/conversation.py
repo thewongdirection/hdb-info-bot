@@ -178,6 +178,33 @@ async def _suggest_town_via_geocoding(text: str, context: ContextTypes.DEFAULT_T
     return nearest_town(lat, lng)
 
 
+async def _resolve_for_compare(
+    entry: str, context: ContextTypes.DEFAULT_TYPE
+) -> tuple[LocalityMatch | None, str | None]:
+    """Best-effort locality resolution for the Compare flow.
+
+    Unlike the single-locality flow (which reprompts the user to
+    disambiguate one unresolved entry at a time), Compare is handed a whole
+    batch up front with no per-entry back-and-forth -- so instead of
+    dropping anything that doesn't string-match a known town/alias/district
+    (which is how real place names like "Orchard" or "Clarke Quay" used to
+    silently vanish from the comparison), it tries geocoding the raw text to
+    the nearest actual HDB town first, and only falls back to the closest
+    fuzzy-match guess if geocoding isn't configured or can't place it
+    either. Returns (None, None) only when nothing at all can be inferred.
+    """
+    try:
+        return resolve(entry), None
+    except LocalityNotFound as exc:
+        suggested_town = await _suggest_town_via_geocoding(entry, context)
+        if suggested_town:
+            return LocalityMatch(towns=[suggested_town], method="geocoded", raw_input=entry), suggested_town
+        if exc.suggestions:
+            best_guess = exc.suggestions[0]
+            return LocalityMatch(towns=[best_guess], method="town_fuzzy", raw_input=entry), best_guess
+        return None, None
+
+
 async def locality_received(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text or ""
     intent = context.user_data.get("intent", "buy")
@@ -335,13 +362,23 @@ async def _handle_compare_query(
         dropped_count = len(raw_entries) - MAX_COMPARE_ENTRIES
         raw_entries = raw_entries[:MAX_COMPARE_ENTRIES]
 
+    # Resolved concurrently -- an unresolved entry may need its own geocoding
+    # call (see _resolve_for_compare), so there's no reason to wait on one
+    # entry's network round-trip before starting the next.
+    resolution_results = await asyncio.gather(
+        *(_resolve_for_compare(entry, context) for entry in raw_entries)
+    )
+
     resolved: list[tuple[str, LocalityMatch]] = []
+    approximated: list[tuple[str, str]] = []
     failed: list[str] = []
-    for entry in raw_entries:
-        try:
-            resolved.append((entry, resolve(entry)))
-        except LocalityNotFound:
+    for entry, (match, approx_town) in zip(raw_entries, resolution_results):
+        if match is None:
             failed.append(entry)
+            continue
+        resolved.append((entry, match))
+        if approx_town:
+            approximated.append((entry, approx_town))
 
     if not resolved:
         return await _reprompt_locality(
@@ -380,6 +417,8 @@ async def _handle_compare_query(
 
     if failed:
         await update.message.reply_text(formatting.compare_partial_failure_note(failed))
+    if approximated:
+        await update.message.reply_text(formatting.compare_approximated_note(approximated))
     if dropped_count:
         await update.message.reply_text(formatting.compare_too_many_note(dropped_count, MAX_COMPARE_ENTRIES))
 

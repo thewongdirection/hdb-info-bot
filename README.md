@@ -118,10 +118,16 @@ this one needs no Google Maps key at all, the chart is rendered locally.
   comma-separated areas (towns/postal codes/district numbers, freely mixed)
   and charts their monthly average resale price side by side over
   `CHART_MONTHS_WINDOW` months (default 24), capped at 6 areas per chart for
-  legibility. Rendered locally with matplotlib
-  ([`hdb_bot/charts.py`](hdb_bot/charts.py)) — no external chart service and
-  no Google Maps key needed, so this feature always works. Areas that fail
-  to resolve are reported but don't block the rest of the comparison.
+  legibility — every entry that resolves gets its own line, not just the
+  first couple. Rendered locally with matplotlib
+  ([`hdb_bot/charts.py`](hdb_bot/charts.py)) — no external chart service
+  needed, so the charting itself always works. Real place names that aren't
+  exact HDB town/alias matches (e.g. "Orchard", "Clarke Quay") are resolved
+  on a best-effort basis: if `GOOGLE_MAPS_API_KEY` is configured, an
+  unresolved or ambiguous entry is geocoded to its nearest actual HDB town
+  rather than dropped; without a Maps key, an ambiguous fuzzy typo falls
+  back to its closest guess instead. A note lists which entries were
+  approximated this way, and which (if any) couldn't be matched at all.
 - **Ask AI**: a 6th top-level option, enabled only when `ANTHROPIC_API_KEY`
   is configured (otherwise the button tells the user the feature isn't
   enabled). Lets a user ask a data question in plain English — e.g. "how

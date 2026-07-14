@@ -339,6 +339,11 @@ def compare_partial_failure_note(failed_entries: list[str]) -> str:
     return f"ℹ️ I couldn't match: {', '.join(repr(e) for e in failed_entries)} — showing the results for the rest."
 
 
+def compare_approximated_note(mapped: list[tuple[str, str]]) -> str:
+    parts = ", ".join(f"{raw!r} → {town.title()}" for raw, town in mapped)
+    return f"ℹ️ Matched to the nearest HDB town: {parts}."
+
+
 def compare_too_many_note(dropped_count: int, max_entries: int) -> str:
     return f"ℹ️ I've compared the first {max_entries} areas only ({dropped_count} more were not included)."
 

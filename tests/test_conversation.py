@@ -516,6 +516,86 @@ async def test_compare_caps_entries_at_max(monkeypatch):
     assert "6" in all_text  # MAX_COMPARE_ENTRIES mentioned in the "dropped" note
 
 
+async def test_compare_charts_every_resolved_entry_not_just_two(monkeypatch):
+    # Regression test: all resolved entries must reach the chart, not just
+    # the first two, however many valid districts were entered.
+    monkeypatch.setattr(
+        conversation.local_store, "load_town_records", MagicMock(return_value=_COMPARE_RECORDS)
+    )
+    captured_series = {}
+
+    def _fake_chart(series, **_kwargs):
+        captured_series.update(series)
+        return b"\x89PNG\r\n\x1a\nfake"
+
+    monkeypatch.setattr(conversation, "build_price_comparison_chart", _fake_chart)
+
+    context = _make_context(_make_config())
+    context.user_data["intent"] = "compare"
+    update = _make_update_message("Bishan, Tampines, Yishun, Punggol")
+
+    state = await conversation.locality_received(update, context)
+
+    assert state == conversation.CHOOSING_INTENT
+    assert set(captured_series.keys()) == {"Bishan", "Tampines", "Yishun", "Punggol"}
+
+
+async def test_compare_geocodes_unresolvable_place_names(monkeypatch):
+    monkeypatch.setattr(
+        conversation.local_store, "load_town_records", MagicMock(return_value=_COMPARE_RECORDS)
+    )
+    captured_series = {}
+
+    def _fake_chart(series, **_kwargs):
+        captured_series.update(series)
+        return b"\x89PNG\r\n\x1a\nfake"
+
+    monkeypatch.setattr(conversation, "build_price_comparison_chart", _fake_chart)
+    monkeypatch.setattr(
+        conversation, "geocode_many",
+        AsyncMock(return_value={"Orchard": (1.3048, 103.8318)}),  # near Bukit Timah
+    )
+
+    context = _make_context(_make_config(google_maps_api_key="fake-key"))
+    context.user_data["intent"] = "compare"
+    update = _make_update_message("Bishan, Orchard")
+
+    state = await conversation.locality_received(update, context)
+
+    assert state == conversation.CHOOSING_INTENT
+    # "Orchard" doesn't string-match any HDB town, but should have been
+    # geocoded to its nearest one and included rather than dropped.
+    assert set(captured_series.keys()) == {"Bishan", "Orchard"}
+    all_text = " ".join(str(c.args) for c in update.message.reply_text.await_args_list)
+    assert "Orchard" in all_text
+    assert "nearest HDB town" in all_text
+
+
+async def test_compare_falls_back_to_best_fuzzy_guess_without_geocoding(monkeypatch):
+    monkeypatch.setattr(
+        conversation.local_store, "load_town_records", MagicMock(return_value=_COMPARE_RECORDS)
+    )
+    captured_series = {}
+
+    def _fake_chart(series, **_kwargs):
+        captured_series.update(series)
+        return b"\x89PNG\r\n\x1a\nfake"
+
+    monkeypatch.setattr(conversation, "build_price_comparison_chart", _fake_chart)
+
+    # No google_maps_api_key configured -> geocoding fallback is unavailable,
+    # so an ambiguous fuzzy typo should still resolve to its closest guess
+    # rather than being dropped from the comparison entirely.
+    context = _make_context(_make_config(google_maps_api_key=None))
+    context.user_data["intent"] = "compare"
+    update = _make_update_message("Tampines, bishn")
+
+    state = await conversation.locality_received(update, context)
+
+    assert state == conversation.CHOOSING_INTENT
+    assert set(captured_series.keys()) == {"Tampines", "Bishn"}
+
+
 async def test_compare_empty_input_reprompts():
     context = _make_context(_make_config())
     context.user_data["intent"] = "compare"
